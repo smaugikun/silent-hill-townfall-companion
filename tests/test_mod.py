@@ -593,6 +593,27 @@ class PhoneCommandTest(ModTest):
         self.assertFalse(self.radio["active"])
         self.assertEqual(self.logged("phone command"), 1)
 
+    def test_raising_and_lowering_go_through_the_request_the_controller_runs(self):
+        self.play()
+        self.command(101, True, 0.23)
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["on"])  # RequestRadioON: Bill raises it with his animation
+        self.command(102, False, 0.23)
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["on", "off"])
+
+    def test_a_request_the_game_hasnt_acted_on_yet_is_not_repeated_at_once(self):
+        self.play()
+        self.radio["ignoreRequests"] = True  # the animation takes a moment: active stays down meanwhile
+        self.command(101, True, 0.23)
+        self.world.tick(1)
+        self.command(102, True, 0.23)  # the phone says it again
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["on"])
+        self.command(103, True, 0.23)
+        self.world.tick(2)  # a moment later it is asked again
+        self.assertEqual(list(self.radio["requests"].values()), ["on", "on"])
+
     def test_lowering_leaves_the_dial(self):
         self.play()
         self.command(101, True, 0.23)
@@ -951,43 +972,113 @@ class CutsceneTest(ModTest):
 
 
 class CutsceneDialogueTest(ModTest):
-    """The phone plays a cutscene's dialogue track; the game's dialogue mix goes quiet meanwhile."""
+    """The phone plays a cutscene's dialogue track; the game's Dialoc speakers go quiet meanwhile."""
 
     def setUp(self):
         super().setUp()
-        self.world.addFmodMix("FMODVCA", "Music")
-        self.dialogue = self.world.addFmodMix("FMODVCA", "Dialogue")
+        self.speaker = self.world.addFmodComponent("actor")
+        self.door = self.world.addFmodComponent(None)
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.world.tick(2)
         self.audio_file = self.commands_file.with_name("townfall-companion-audio.json")
         self.seq = int(time.time() * 1000)
 
-    def ask(self, dialogue):
+    def ask(self, dialogue=True):
         self.seq += 100
         self.audio_file.write_text(json.dumps({"muteGame": True, "dialogue": dialogue, "seq": self.seq}))
 
-    def test_the_mixes_are_logged_and_dialogue_picked(self):
-        self.assertEqual(self.logged("[TF-AUDIO] FMOD mixes: VCA Music, VCA Dialogue; dialogue: VCA Dialogue"), 1)
-        self.assertTrue(self.telemetry()["audio"]["cutsceneDialogue"])  # the phone may play cutscene dialogue
+    def hear_speaker(self):
+        """A cutscene runs and a speaker talks in it: the mod knows that this is where the dialogue plays."""
+        sequence = self.world.playSequence("LS_WakeUp", 3)
+        self.speaker["playing"] = True
+        self.world.tick(1)
+        return sequence
+
+    def test_unverified_until_a_speaker_talks_in_a_cutscene(self):
+        self.assertFalse(self.telemetry()["audio"]["cutsceneDialogue"])
+        self.ask()
+        sequence = self.world.playSequence("LS_WakeUp", 3)  # nothing talks yet
+        self.world.tick(4)
+        self.assertEqual(self.speaker["volume"], 1)
+        self.speaker["playing"] = True
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-AUDIO] a Dialoc speaker talks in the cutscene"), 1)
+        self.assertTrue(self.telemetry()["audio"]["cutsceneDialogue"])
 
     def test_quiet_only_in_a_cutscene_the_phone_plays(self):
-        self.ask(True)
+        sequence = self.hear_speaker()
+        self.ask()
         self.world.tick(4)
-        self.assertEqual(self.dialogue["volume"], 1)  # no cutscene
-        sequence = self.world.playSequence("LS_WakeUp", 3)
-        self.ask(True)
-        self.world.tick(4)
-        self.assertEqual(self.dialogue["volume"], 0)
+        self.assertEqual(self.speaker["volume"], 0)
+        self.assertEqual(self.door["volume"], 1)  # not Dialoc's
         sequence["playing"] = False
         self.world.tick(4)
-        self.assertEqual(self.dialogue["volume"], 1)
+        self.assertEqual(self.speaker["volume"], 1)
         self.assertEqual(self.logged("[TF-AUDIO] cutscene dialogue back on in the game"), 1)
 
+    def test_stays_quiet_when_the_phones_request_drops_out(self):
+        sequence = self.hear_speaker()
+        self.ask()
+        self.world.tick(4)
+        self.assertEqual(self.speaker["volume"], 0)
+        self.audio_file.write_text(json.dumps({"muteGame": True, "dialogue": False, "seq": self.seq + 100}))
+        self.world.tick(1)
+        self.assertEqual(self.speaker["volume"], 0)  # between two lines, or the cutscene running again
+        self.assertEqual(self.logged("cutscene dialogue off in the game"), 1)
+        sequence["playing"] = False
+        self.world.tick(1)
+        self.assertEqual(self.speaker["volume"], 1)
+
+    def test_a_dialogue_component_and_a_late_speaker_are_silenced_too(self):
+        sequence = self.hear_speaker()
+        self.ask()
+        self.world.tick(4)
+        late = self.world.addFmodComponent("dialogue")
+        self.world.tick(1)
+        self.assertEqual(late["volume"], 0)
+
     def test_not_when_the_phone_has_no_track_for_it(self):
-        self.world.playSequence("LS_Unknown", 3)
+        self.hear_speaker()
         self.ask(False)
         self.world.tick(4)
-        self.assertEqual(self.dialogue["volume"], 1)
+        self.assertEqual(self.speaker["volume"], 1)
+
+    def test_not_outside_a_cutscene(self):
+        sequence = self.hear_speaker()
+        sequence["playing"] = False
+        self.ask()
+        self.world.tick(4)
+        self.assertEqual(self.speaker["volume"], 1)
+
+
+class NoRadioRequestsTest(ModTest):
+    options = {"noRadioRequests": True}
+
+    def test_the_crtv_is_switched_without_the_animation_and_logged_once(self):
+        commands = self.commands_file
+        commands.write_text(json.dumps({"active": True, "frequency": 0.5, "seq": 100}))  # left over from an earlier session
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(3)
+        commands.write_text(json.dumps({"active": True, "frequency": 0.5, "seq": 101}))
+        self.world.tick(1)
+        self.assertTrue(self.world.radio["active"])
+        commands.write_text(json.dumps({"active": False, "frequency": 0.5, "seq": 102}))
+        self.world.tick(2)
+        self.assertFalse(self.world.radio["active"])
+        self.assertEqual(self.logged("RequestRadioON/OFF failed"), 1)
+
+
+class NoDialocTest(ModTest):
+    options = {"noDialoc": True}
+
+    def test_nothing_is_silenced_and_nothing_fails(self):
+        speaker = self.world.addFmodComponent("actor")
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.playSequence("LS_WakeUp", 3)
+        speaker["playing"] = True
+        self.world.tick(4)
+        self.assertEqual(speaker["volume"], 1)
+        self.assertFalse(self.telemetry()["audio"]["cutsceneDialogue"])
 
 
 class PerfTest(ModTest):

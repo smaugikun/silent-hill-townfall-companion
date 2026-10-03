@@ -35,7 +35,6 @@ local function refresh()
         crtv.onLevelStart()
         signals.onLevelStart()
         cutscene.onLevelStart()
-        audio.onLevelStart()
     end
 end
 

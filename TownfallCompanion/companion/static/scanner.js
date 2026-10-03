@@ -6,9 +6,8 @@
 // CRTV is up the phone shows it, the fine-tune mini-game too, and F presses the fine-tune key; while it is
 // down the phone scans by itself from the telemetry, on the same dial. With "In VIEW, switch on the game's
 // CRTV" (raises) the phone switches it on and keeps it on (put away with the controller, it comes on again;
-// not over a cutscene or the pause menu), also while the phone is put down. Switched on by the mod it
-// works as if raised (the signals talk, the subtitles show, the mini-game runs) but the character doesn't
-// hold it up on the monitor. "Turning the phone turns the
+// not over a cutscene or the pause menu), also while the phone is put down. The character raises it with
+// his animation, as L1 does (the mod calls the same request). "Turning the phone turns the
 // character" (steering) is apart from that: in VIEW, with the phone in hand (pickup.js), turning it turns
 // the player (app.js).
 // AV OUT: the PC has the CRTV, raised and lowered with the controller; the phone shows its picture or

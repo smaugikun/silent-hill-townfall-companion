@@ -15,9 +15,8 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
   phone left it, and while that one is up the phone shows it, the fine-tune mini-game included, and F
   saves / confirms the tuned frequency. The monsters on the phone are an interpretation; the game's models are not
   included.
-- **In VIEW, switch on the game's CRTV** (optional, off by default): the game's CRTV works as if raised, with
-  the signals' voices, the subtitles and the fine-tune mini-game, all on the phone, without showing on the
-  monitor.
+- **In VIEW, switch on the game's CRTV** (optional, off by default): your character raises the CRTV as with L1
+  on a controller, and the signals' voices, the subtitles and the fine-tune mini-game work.
 - **AV OUT:** the CRTV is on the PC, with all its sound; the phone mirrors the picture or stays dark, and its
   buttons still tune, and F saves / confirms the frequency.
 - **The phone steers your character** (optional, off by default): in VIEW, turning the phone turns your

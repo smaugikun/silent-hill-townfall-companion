@@ -20,16 +20,33 @@ local signals = require("tf_signals")
 local cutscene = require("tf_cutscene")
 
 local HOLD_S = 5 -- the phone's request lasts this long
--- FMOD VCA or bus names that carry dialogue, in order of preference (the pak lists assets named
--- Dialogue, DX and VO; which one mixes the cutscenes' dialogue is a guess until seen in-game).
-local DIALOGUE_MIX = { "^Dialogue$", "^DX$", "^VO$", "Dialog", "DX" }
+local SORT_PER_UPDATE = 200 -- new FMOD components looked at per update: a level load makes thousands
+
+-- A cutscene's dialogue plays through the Dialoc plugin, on speaker components: FMODAudioComponents that a
+-- DialocAudioComponentActor makes while the game runs, or FMODDialogueComponents. (The object dump holds no FMOD
+-- bus or VCA to turn down, only these.) Every new FMOD component is queued by NotifyOnNewObject and sorted a few
+-- at a time by whose it is: the doors' and lights' are let go, the speakers kept.
+local FMOD_COMPONENT = "/Script/FMODStudio.FMODAudioComponent"
+local SPEAKER_ACTOR = "/Script/DialocPluginCore.DialocAudioComponentActor"
+local DIALOGUE_COMPONENT = "/Script/DialocPlugin.FMODDialogueComponent"
 
 local M = {}
 
 local wanted, askedAt, off = false, -math.huge, false
 local phoneDialogue, dialogueOff, linesOff = false, false, false
 local phoneVideo, videoOff = false, false
-local statics, dialogueMix -- FMODBlueprintStatics' default object; {class, object, name} of the dialogue mix
+local unsorted, nextUnsorted = {}, 1  -- new FMOD components, and the next one to look at
+local speakers = {}                   -- Dialoc's speaker components
+local speakerActor, dialogueComponent -- the classes to tell them by, looked up once they are needed
+local classLookedUpAt = -math.huge
+local dialogueVerified = false        -- a speaker was heard in a cutscene: the game can be silenced there
+
+local componentClass = StaticFindObject(FMOD_COMPONENT)
+if componentClass and componentClass:IsValid() then
+    NotifyOnNewObject(FMOD_COMPONENT, function(c) unsorted[#unsorted + 1] = c end)
+else
+    common.log("TF-AUDIO", "%s not found, cutscene dialogue stays in the game", FMOD_COMPONENT)
+end
 
 -- A list of UFMODAudioComponents: add(get) takes the one get() returns if it is there, once.
 local function componentList()
@@ -100,33 +117,60 @@ local function setVolume(list, volume)
     return count
 end
 
--- Once per level: FMOD's VCAs and buses loaded now, logged, and the one mixing dialogue picked.
-function M.onLevelStart()
-    statics = statics or StaticFindObject("/Script/FMODStudio.Default__FMODBlueprintStatics")
-    local found, names = {}, {}
-    for _, class in ipairs({ "FMODVCA", "FMODBus" }) do
-        for _, o in ipairs(FindAllOf(class) or {}) do
-            local name = o:GetFName():ToString()
-            found[#found + 1] = { class = class, object = o, name = name }
-            names[#names + 1] = class:sub(5) .. " " .. name
-        end
-    end
-    dialogueMix = nil
-    for _, pattern in ipairs(DIALOGUE_MIX) do
-        for _, f in ipairs(found) do
-            if not dialogueMix and f.name:find(pattern) then dialogueMix = f end
-        end
-    end
-    common.logChange("fmod mixes", "TF-AUDIO", string.format("FMOD mixes: %s; dialogue: %s",
-        #names > 0 and table.concat(names, ", ") or "none loaded",
-        dialogueMix and (dialogueMix.class:sub(5) .. " " .. dialogueMix.name) or "not found, cutscene dialogue stays in the game"))
+local function lookUp(path)
+    local class = StaticFindObject(path) -- by path: slow in this UE4SS build, so rarely
+    return class and class:IsValid() and class or nil
 end
 
-local function setDialogueVolume(volume)
-    if not (dialogueMix and dialogueMix.object:IsValid() and statics) then return false end
-    if dialogueMix.class == "FMODVCA" then statics:VCASetVolume(dialogueMix.object, volume)
-    else statics:BusSetVolume(dialogueMix.object, volume) end
-    return true
+-- Whether an FMOD component is one of Dialoc's speakers: a dialogue component, or one made on its actor.
+local function isSpeaker(c)
+    if not c:IsValid() then return false end
+    if dialogueComponent and c:IsA(dialogueComponent) then return true end
+    local outer = c:GetOuter()
+    return speakerActor ~= nil and outer ~= nil and outer:IsValid() and outer:IsA(speakerActor)
+end
+
+-- Sorts the next few new FMOD components; the speakers are kept.
+local function sortNewComponents()
+    if nextUnsorted > #unsorted then
+        if nextUnsorted > 1 then unsorted, nextUnsorted = {}, 1 end
+        return
+    end
+    if not (speakerActor and speakerActor:IsValid()) and os.clock() - classLookedUpAt > 30 then
+        classLookedUpAt = os.clock()
+        speakerActor = lookUp(SPEAKER_ACTOR)
+        dialogueComponent = lookUp(DIALOGUE_COMPONENT)
+    end
+    if not speakerActor and not dialogueComponent then -- no Dialoc here: nothing to find
+        if #unsorted > 20000 then unsorted, nextUnsorted = {}, 1 end
+        return
+    end
+    local last = math.min(#unsorted, nextUnsorted + SORT_PER_UPDATE - 1)
+    for i = nextUnsorted, last do
+        local c = unsorted[i]
+        unsorted[i] = false -- let go of it
+        local ok, mine = pcall(isSpeaker, c)
+        if ok and mine then speakers[#speakers + 1] = c end
+    end
+    nextUnsorted = last + 1
+end
+
+-- The speakers there are now: each is checked with IsValid() before use, the game frees them with a level.
+local function liveSpeakers()
+    local live = {}
+    for _, c in ipairs(speakers) do
+        if c:IsValid() then live[#live + 1] = c end
+    end
+    speakers = live
+    return live
+end
+
+local function speakerPlaying()
+    for _, c in ipairs(liveSpeakers()) do
+        local ok, playing = pcall(function() return c:IsPlaying() end)
+        if ok and playing then return true end
+    end
+    return false
 end
 
 -- A request from the phone: true silences the game's CRTV sound for HOLD_S, false brings it back.
@@ -144,12 +188,13 @@ end
 -- Whether a cutscene's dialogue can go quiet in the game here (its FMOD mix is loaded). The phone plays
 -- it only then: otherwise it would be heard twice.
 function M.canSilenceDialogue()
-    return dialogueMix ~= nil and dialogueMix.object:IsValid()
+    return dialogueVerified
 end
 
 -- A few times a second: silences again what started since (a new monster, a restarted loop), or
 -- turns the sound back on once the phone stops asking.
 function M.update()
+    sortNewComponents() -- also in menus and while loading: that is when most of them are made
     if not player.isTracking() then return end
     local keep = wanted and os.clock() - askedAt < HOLD_S
     if keep then
@@ -185,16 +230,25 @@ function M.update()
         common.log("TF-AUDIO", "waypoint dialogue back on in the game")
     end
 
-    -- Only during a cutscene whose dialogue the phone plays: the mix carries all dialogue.
+    -- A cutscene's dialogue plays on Dialoc's speakers. The game's goes quiet only while a cutscene plays and the
+    -- phone plays its dialogue; once it has, it stays quiet until the cutscene ends: the phone's request dropping
+    -- out between two lines, or when the cutscene runs again, let the game's words through. Not before a speaker
+    -- has been heard in a cutscene: only then is it known that this is where the dialogue plays, and the phone
+    -- (telemetry audio.cutsceneDialogue) may take it over.
     local ok, sequence = pcall(cutscene.sequence)
-    local quiet = talking and ok and sequence ~= nil
-    if quiet and not dialogueOff then
-        if setDialogueVolume(0) then
+    local inCutscene = ok and sequence ~= nil
+    if inCutscene and not dialogueVerified and speakerPlaying() then
+        dialogueVerified = true
+        common.log("TF-AUDIO", "a Dialoc speaker talks in the cutscene: the phone may play its dialogue")
+    end
+    if keep and inCutscene and dialogueVerified and (talking or dialogueOff) then
+        setVolume(liveSpeakers(), 0) -- every time: a speaker made since is silenced too
+        if not dialogueOff then
             dialogueOff = true
             common.log("TF-AUDIO", "cutscene dialogue off in the game, the phone plays it")
         end
-    elseif not quiet and dialogueOff then
-        setDialogueVolume(1)
+    elseif dialogueOff then
+        setVolume(liveSpeakers(), 1)
         dialogueOff = false
         common.log("TF-AUDIO", "cutscene dialogue back on in the game")
     end
