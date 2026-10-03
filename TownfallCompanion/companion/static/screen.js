@@ -93,10 +93,24 @@ function drawMonsterView(monsters, heading, pitch, now) {
       drawSilhouette(frame, w / 2 + focal * Math.tan(angle), horizon + height * EYE / frame.metres, height, now,
         [...String(e.id)].reduce((n, c) => n + c.charCodeAt(0), 0));
     } else {
-      const edge = angle > 0 ? w - 30 : 30, tip = angle > 0 ? 26 : -26;
+      // Off-screen monster direction: deliberately large/high-contrast so it survives the red static.
+      const dir = angle > 0 ? 1 : -1;
+      const edge = dir > 0 ? w - 46 : 46;
+      const tip = edge + dir * 38;
+      ctx.save();
+      ctx.shadowColor = "rgba(255,35,25,.95)";
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = "rgba(255,238,225,.98)";
+      ctx.strokeStyle = "rgba(65,0,0,.98)";
+      ctx.lineWidth = 8;
       ctx.beginPath();
-      ctx.moveTo(edge + tip, horizon); ctx.lineTo(edge, horizon - 26); ctx.lineTo(edge, horizon + 26);
-      ctx.closePath(); ctx.fill();
+      ctx.moveTo(tip, horizon);
+      ctx.lineTo(edge - dir * 8, horizon - 38);
+      ctx.lineTo(edge - dir * 8, horizon + 38);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.restore();
     }
   }
   ctx.font = "30px ui-monospace, Consolas, monospace";
@@ -109,7 +123,12 @@ function drawMonsterView(monsters, heading, pitch, now) {
 // plainly snowing even with nothing near: fainter, a scanning CRTV looked switched off.
 // `view` is from scannerView(); `monsters` are the tuned monsters' contacts(); `strongest` the strongest
 // signal on it, 0..1; `heading` and `pitch` where the view looks.
-export function drawScreen(view, monsters, strongest, heading, pitch, now, clipPlaying) {
+export function drawScreen(view, monsters, strongest, heading, pitch, now, clipPlaying, stopped = false) {
+  if (stopped) {
+    ctx.fillStyle = "#080908";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
   if (clipPlaying) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   } else {
