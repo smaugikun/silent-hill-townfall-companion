@@ -111,7 +111,8 @@ Game videos: pre-cache 1/18 (1 ready)
 The automatic converter uses RAD's Bink-to-AVI path internally, because that is the reliable path for
 Townfall's clips. FFmpeg immediately compresses the temporary AVI into the cached phone MP4, then the AVI
 is deleted. RAD and FFmpeg run in the background; closing the companion stops an active conversion, and
-the next start continues with whatever clips are still missing.
+the next start continues with whatever clips are still missing. Background conversion also runs at reduced
+CPU priority (and FFmpeg uses one encoding thread) so on-demand phone audio/dialogue stays responsive during play.
 
 If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
 `TownfallCompanion\tools\` (FFmpeg can also be installed with
