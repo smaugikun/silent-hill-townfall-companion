@@ -22,6 +22,7 @@ VERSION = "1.0.0"  # the release's version: the bridge says it at start, the rel
 
 MOD_DIR = Path(__file__).resolve().parents[1]
 SETTINGS_FILE = MOD_DIR / "companion.ini"
+UE4SS_SETTINGS_FILE = MOD_DIR.parent.parent / "UE4SS-settings.ini"
 CLIPS_DIR = MOD_DIR / "cache" / "clips"    # the game's videos, converted automatically or by convert_videos.py
 SOUNDS_DIR = MOD_DIR / "cache" / "sounds"  # the game's sounds, decoded as the phone asks for them
 TOOLS_DIR = MOD_DIR / "tools"
@@ -57,7 +58,7 @@ game =
 ; vgmstream-cli.exe reads the game's sounds; automatic video conversion needs it too.
 vgmstream =
 ; ffmpeg.exe and radvideo64.exe (RAD Video Tools): missing videos pre-cache automatically when the companion starts.
-; Convert Game Videos.bat is optional; it pre-caches them before launch so no conversion runs during play.
+; Convert Game Videos.bat is a manual pre-cache shortcut if you want no conversion work during play.
 ffmpeg =
 radvideo =
 """
@@ -101,6 +102,40 @@ def _path(value):
         return None
     path = Path(value)
     return path if path.is_absolute() else MOD_DIR / path
+
+
+def disable_ue4ss_console():
+    """Hide UE4SS's separate Windows debug console while keeping UE4SS.log and the in-game console mod intact.
+
+    Townfall Companion is installed at ue4ss\\Mods\\TownfallCompanion, so the shared UE4SS settings file
+    is two folders above MOD_DIR. Preserve the rest of that file verbatim.
+    """
+    path = UE4SS_SETTINGS_FILE
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        pattern = re.compile(r"(?im)^(\s*ConsoleEnabled\s*=\s*)[^;\r\n]*(.*)$")
+        if pattern.search(text):
+            changed = pattern.sub(lambda m: m.group(1) + "0" + m.group(2), text, count=1)
+        else:
+            section = re.search(r"(?im)^\s*\[Debug\]\s*(?:[;#].*)?$", text)
+            newline = "\r\n" if "\r\n" in text else "\n"
+            if section:
+                end = text.find("\n", section.end())
+                if end < 0:
+                    end = len(text)
+                else:
+                    end += 1
+                changed = text[:end] + "ConsoleEnabled = 0" + newline + text[end:]
+            else:
+                changed = text.rstrip() + newline * 2 + "[Debug]" + newline + "ConsoleEnabled = 0" + newline
+        if changed != text:
+            path.write_text(changed, encoding="utf-8")
+            return True
+        return False
+    except OSError:
+        return None
 
 
 def find_game_dir():
