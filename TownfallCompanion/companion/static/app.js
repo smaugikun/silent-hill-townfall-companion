@@ -367,7 +367,7 @@ const phonePlays = () => control.selector === "VIEW" && sound.inView; // AV OUT:
 // phone doesn't take the sound away from the game either.
 function requestGameSound() {
   const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundReady() && bridgeOnline
-    && state.gameLive && document.visibilityState === "visible";
+    && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
   if (quiet || gameSoundAsked) {
     postControl({type: "audio", muteGame: quiet, dialogue: quiet && talkingNow != null, video: quiet && crtvVideoNow});
   }
@@ -560,7 +560,7 @@ function fineTuneAt(now) {
 let knownSignals = null; // ids of the waypoint signals seen, since the baseline
 let knownFrom = null;    // whose they are: the demo's or the game's
 function announceNewSignals() {
-  if (!state.gameLive || paused) return; // one that came up in the pause menu buzzes after it
+  if (!state.gameLive || state.player?.alive === false || paused) return; // none while dead/paused
   const ids = (state.signals || []).map(s => s.id);
   if (knownSignals == null || knownFrom !== state.demo) {
     knownSignals = new Set(ids);
@@ -583,16 +583,19 @@ function onSignalType(type) {
 
 function render(now) {
   smoothHeading(now);
-  // Without the game (or the demo) coming through the bridge the CRTV is dead: no picture, no sound.
-  const live = bridgeOnline && !bridgeOutdated() && state.gameLive;
-  holdMedia = paused || (live && now - sampleArrivedAt > SAMPLE_GAP_MS);
+  // Death is not the same as lost telemetry: Townfall can keep the gameplay pawn/state alive long enough
+  // for the old scanner view to keep moving. Explicit player.alive shuts the phone CRTV down immediately.
+  const connected = bridgeOnline && !bridgeOutdated() && state.gameLive;
+  const alive = state.player?.alive !== false;
+  const live = connected && alive;
+  holdMedia = paused || !alive || (connected && now - sampleArrivedAt > SAMPLE_GAP_MS);
   const view = scannerView(state, live);
   const monsters = contacts(view.enemies.filter(e => e.tuned));
   // A monster outranks a waypoint signal; their channels shouldn't overlap anyway.
   const signal = monsters.length ? null : contacts(view.signals.filter(s => s.tuned))[0] ?? null;
   const heading = scannerHeading();
   const strongest = [...view.enemies, ...view.signals].reduce((m, s) => Math.max(m, clamp01(s.signal)), 0);
-  drawScreen(view, monsters, strongest, heading, scannerPitch(), now, clipPlaying);
+  drawScreen(view, monsters, strongest, heading, scannerPitch(), now, clipPlaying, connected && !alive);
   const tune = live && view.source === "game" && fineTuneAt(now);
   if (tune) drawFineTune(tune);
   updateDial(view);
@@ -637,9 +640,9 @@ function render(now) {
   screenText(now);
   if (!settings.hidden) renderStatus(view, monsters[0], signal, heading);
 
-  if (!paused) signalPulse(monsters[0], heading); // no buzzing in the pause menu
+  if (!paused && alive) signalPulse(monsters[0], heading); // none while paused/dead
   watchCentering(now);
-  maybeSteer();
+  if (alive) maybeSteer();
   requestAnimationFrame(render);
 }
 
