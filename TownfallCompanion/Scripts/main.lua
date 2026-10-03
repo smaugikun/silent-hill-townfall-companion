@@ -59,9 +59,9 @@ local function sample()
     -- keeps speech in step and runs the fine-tune box by it. world: the world's own clock (s, the player's
     -- time in it), which stands still while the game is paused: the phone then holds everything too.
     f:write(string.format('{"t":%.3f,"world":%s,"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"pitch":%.1f,"alive":%s},"enemies":[%s],'
-        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s,"cutsceneDialogue":%s}}',
+        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s}}',
         os.clock(), common.jsonNumber(worldTime, "%.2f"), x, y, yaw, pitch, tostring(alive), enemyJson, signalJson, crtvJson,
-        cutsceneJson, tostring(audio.isOff()), tostring(audio.canSilenceDialogue())))
+        cutsceneJson, tostring(audio.isOff())))
     f:close()
     logChange("telemetry", "TF-COMPANION", "telemetry -> " .. telemetryPath)
 end

@@ -5,7 +5,7 @@
 // monster's signal when tuned to one, a waypoint's signal, the fine-tune loop, clicks as the needle
 // passes the notches, the CRTV going up and down (the in-game CRTV's own are left to the PC when the phone
 // has its sound: the game can't silence them). The story videos carry their own soundtracks
-// (app.js lets the clip play out loud), and the talking (a waypoint's lines, a cutscene's dialogue)
+// (app.js lets the clip play out loud), and the talking (a waypoint's lines)
 // plays in step with the game. Whether the phone plays at all is app.js's phonePlays(): in VIEW
 // unless switched off here (sound.inView), in AV OUT only when set to show picture and sound.
 import { clamp01, loadFlag, loadSetting, saveSetting, watchStillTime } from "./util.js";
@@ -47,7 +47,6 @@ export function setSound(key, value) {
 
 let audio = null, master = null;
 const buffers = new Map(); // sound name -> AudioBuffer
-let dialogueTracks = [];   // the cutscenes' dialogue tracks, <Cutscene>_71_DX
 let lineNames = new Set(); // the spoken lines (Dialogue_EN.bank), as Dialoc names them
 const loops = {};          // loop -> its gain node
 
@@ -66,7 +65,6 @@ export async function unlockSound() {
     const response = await fetch("/sounds/sounds.json");
     const catalogue = await response.json();
     if (!response.ok) throw new Error(catalogue.error);
-    dialogueTracks = catalogue.dialogue;
     lineNames = new Set(catalogue.lines);
     await Promise.all(catalogue.sounds.filter(used).map(async (name) => {
       const data = await (await fetch(`/sounds/${encodeURIComponent(name)}.wav`)).arrayBuffer();
@@ -144,7 +142,7 @@ export function updateSound(now) {
   }
 }
 
-// --- Talking: a cutscene's dialogue, a waypoint's line ---
+// --- Talking: a waypoint's line ---
 //
 // Streamed by an audio element each (a cutscene's track runs minutes long) and kept in step with the
 // game: the mod reads how far in the game is, stamped with the game's clock, which app.js maps to the
@@ -238,49 +236,18 @@ function syncedTrack(folder) {
   return track;
 }
 
-// Each cutscene's dialogue is one track in the game (Cinematics_EN.bank: WakeUp_71_DX, ...), played
-// along with the cutscene, found by name in its level sequence's.
-const dialogue = syncedTrack("dialogue");
-const cutsceneTracks = new Map(); // level sequence name -> dialogue track or null
-
 // A waypoint's line (Dialogue_EN.bank), as the game says it: tuned in, clear; not quite, through a
 // radio's narrow band and quieter, as the distorted one sounds in the game.
 const line = syncedTrack("lines");
 let lineFilter = null, lineLevel = null;
 
-// Both through Web Audio, so they follow the master volume and share its output delay.
+// Through Web Audio, so it follows the master volume and shares its output delay.
 function routeTalking() {
-  audio.createMediaElementSource(dialogue.element).connect(master);
   lineFilter = audio.createBiquadFilter();
   lineFilter.frequency.value = 1400;
   lineFilter.Q.value = 0.8;
   lineLevel = audio.createGain();
   audio.createMediaElementSource(line.element).connect(lineFilter).connect(lineLevel).connect(master);
-}
-
-const normalized = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-// The dialogue track of a level sequence: the longest track name found in the sequence's name.
-function dialogueFor(sequence) {
-  if (!cutsceneTracks.has(sequence)) {
-    const name = normalized(sequence);
-    let best = null;
-    for (const track of dialogueTracks) {
-      const base = normalized(track.replace(/_\d+_DX$/, ""));
-      if (base && name.includes(base) && (!best || base.length > best.base.length)) best = {track, base};
-    }
-    cutsceneTracks.set(sequence, best?.track ?? null);
-  }
-  return cutsceneTracks.get(sequence);
-}
-
-// Once a frame, with the cutscene running ({sequence, sequenceTime, at}: at is when the game was that
-// far in, on the phone's clock) or null, whether the phone plays sound now, and whether the game is
-// paused. Returns the dialogue track playing, or null.
-export function updateDialogue(cutscene, playing, held) {
-  const name = playing && cutscene?.sequence && soundReady() ? dialogueFor(cutscene.sequence) : null;
-  dialogue.update(name, cutscene?.sequenceTime, cutscene?.at, held);
-  return dialogue.canTakeOver() ? dialogue.name : null;
 }
 
 // The file of what a waypoint says ({line, id} from the mod: the programmer sound, else the dialogue
@@ -301,6 +268,5 @@ export function updateLine(said, playing, held) {
 
 // For Settings: what talks on the phone and how far ahead of the game it is ({name, drift, followed}), or null.
 export function talking() {
-  const track = line.name ? line : dialogue.name ? dialogue : null;
-  return track && {name: track.name, drift: track.drift, followed: track.followed};
+  return line.name ? {name: line.name, drift: line.drift, followed: line.followed} : null;
 }

@@ -83,13 +83,6 @@ return function(scriptsDir, tempDir, options)
         WaypointSignalNeedleColour = { R = 0.1, G = 0.35, B = 1, A = 1 },
         NotDiscoveredSignalNeedleColour = { R = 0.8, G = 0.8, B = 0.75, A = 1 },
     })
-    -- FMOD components (world.addFmodComponent) and the classes Dialoc's speakers are told apart by.
-    local FMOD_COMPONENT = "/Script/FMODStudio.FMODAudioComponent"
-    local dialocClasses = {
-        ["/Script/DialocPluginCore.DialocAudioComponentActor"] = object({ name = "DialocAudioComponentActor" }),
-        ["/Script/DialocPlugin.FMODDialogueComponent"] = object({ name = "FMODDialogueComponent" }),
-    }
-    local fmodComponentClass = object({ name = "FMODAudioComponent" })
     function StaticFindObject(path)
         world.staticFindCalls = world.staticFindCalls + 1 -- each one walks every object in the game's UE4SS
         for _, playerPath in pairs(CUTSCENE_PLAYERS) do
@@ -99,8 +92,6 @@ return function(scriptsDir, tempDir, options)
             if path == class then return object({ name = class }) end
         end
         if path == SEQUENCE_PLAYER_CLASS then return object({ name = "LevelSequencePlayer" }) end
-        if path == FMOD_COMPONENT then return fmodComponentClass end
-        if dialocClasses[path] then return options.noDialoc and CreateInvalidObject() or dialocClasses[path] end
         if path == NEEDLES then
             world.needleLookups = world.needleLookups + 1
             return options.noNeedles and CreateInvalidObject() or world.needles
@@ -117,7 +108,7 @@ return function(scriptsDir, tempDir, options)
         error("unexpected StaticFindObject " .. path)
     end
     function NotifyOnNewObject(path, fn)
-        assert(path == ENEMY_CLASS or path == WAYPOINT_CLASS or path == SEQUENCE_PLAYER_CLASS or path == FMOD_COMPONENT
+        assert(path == ENEMY_CLASS or path == WAYPOINT_CLASS or path == SEQUENCE_PLAYER_CLASS
             or path == MEDIA_CLASSES.bink or path == MEDIA_CLASSES.media, "unexpected NotifyOnNewObject " .. path)
         notify[path] = fn
     end
@@ -365,20 +356,6 @@ return function(scriptsDir, tempDir, options)
         end
         p.url, p.playing, p.seconds = url or "", url ~= nil, seconds
         return p
-    end
-
-    -- The game makes an FMOD component (NotifyOnNewObject fires): "actor" = on a DialocAudioComponentActor,
-    -- "dialogue" = an FMODDialogueComponent, nil = anything else (a door's, a light's).
-    function world.addFmodComponent(speaker)
-        local c = fmodSound()
-        local owner = object({ IsA = function(self, class) return speaker == "actor" and class == dialocClasses["/Script/DialocPluginCore.DialocAudioComponentActor"] end })
-        c.GetOuter = function() return owner end
-        c.IsA = function(self, class)
-            return (speaker == "dialogue" and class == dialocClasses["/Script/DialocPlugin.FMODDialogueComponent"])
-                or class == fmodComponentClass
-        end
-        if notify[FMOD_COMPONENT] then notify[FMOD_COMPONENT](c) end
-        return c
     end
 
     -- The game frees a cutscene player (a level change): IsValid turns false, and any other call on it

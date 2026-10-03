@@ -6,8 +6,7 @@ import { control, letGo, onControlChange, onTelemetry, phoneShows, scannerView, 
 import { listenMotion, onPickup, onPutDown, pickup, pickupPosition, setAutoPickup, setStandAvOut, wakeSteering } from "./pickup.js";
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
-import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateDialogue,
-  updateLine, updateSound } from "./sound.js";
+import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateLine, updateSound } from "./sound.js";
 import { createFollower } from "./finetune.js";
 
 let state = {}; // the bridge's latest, from its first update on; every read copes with what is missing
@@ -359,7 +358,7 @@ function goFullScreen() {
 // drops off the Wi-Fi leaves the game audible.
 const GAME_SOUND_REQUEST_MS = 2000;
 let gameSoundAsked = false;
-let talkingNow = null; // what talks on the phone now: a cutscene's dialogue track or a waypoint's line
+let talkingNow = null; // the waypoint's line the phone says now
 let crtvUpNow = false; // the game's CRTV is up (a waypoint's line may start any moment)
 let crtvVideoNow = false; // the phone plays the game's CRTV screen video out loud (its converted copy)
 
@@ -373,9 +372,9 @@ const phonePlays = () => control.selector === "VIEW" && sound.inView; // AV OUT:
 function requestGameSound() {
   const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundReady() && bridgeOnline
     && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
-  // A waypoint's line is asked for before it starts, while the game's CRTV is up (outside a cutscene): the
+  // A waypoint's line is asked for before it starts, while the game's CRTV is up: the
   // game's copy goes quiet in the same moment, not a round trip after, which let its first words out.
-  const linesComing = Boolean(state.crtv?.active) && !state.cutscene?.sequence;
+  const linesComing = Boolean(state.crtv?.active);
   if (quiet || gameSoundAsked) {
     postControl({type: "audio", muteGame: quiet, dialogue: quiet && (talkingNow != null || linesComing),
       video: quiet && crtvVideoNow});
@@ -477,11 +476,7 @@ function talkText() {
     return name ? `line ${name}, heard in the game (the phone isn't playing sound now)`
       : `line "${said.line}" (dialogue "${said.id}"), not in the game's sound banks: heard in the game`;
   }
-  if (!state.cutscene?.sequence) return "quiet";
-  if (!phonePlays() || !soundReady()) return "a cutscene, heard in the game";
-  return sound.muteGame && state.audio?.cutsceneDialogue !== true
-    ? "a cutscene, its dialogue in the game only (the game can't silence it here)"
-    : "a cutscene without a dialogue track here";
+  return state.cutscene?.sequence ? "a cutscene, heard in the game" : "quiet";
 }
 
 const settings = $("settings");
@@ -625,15 +620,12 @@ function render(now) {
   // Showing the game's CRTV, the clip is the video its screen plays: only then may the game's go quiet.
   const crtvVideo = view.source === "game" && !cutscene?.video && clipPlaying && !clip.muted;
   if (crtvVideo !== crtvVideoNow) { crtvVideoNow = crtvVideo; requestGameSound(); }
-  // The talking plays along wherever the rest of the sound does (phonePlays), in step with the
-  // game by when it read how far in it was: a cutscene's dialogue, and what a waypoint says. A
-  // cutscene's dialogue only where the game can drop it (the mod says), or keeps its sound anyway:
-  // never heard twice.
-  const sceneOnPhone = playing && (!sound.muteGame || state.audio?.cutsceneDialogue === true);
-  const scene = updateDialogue(cutscene?.sequence ? {...cutscene, at: sampledAt} : null, sceneOnPhone, holdMedia);
+  // What a waypoint says plays along wherever the rest of the sound does (phonePlays), in step with the
+  // game by when it read how far in it was. Only what comes out of the CRTV: the story cutscenes' own
+  // dialogue is the game's alone.
   const said = shown ? spokenLine(state.signals) : null;
   const line = updateLine(said && {...said, at: sampledAt}, playing, holdMedia);
-  if ((line ?? scene) !== talkingNow) { talkingNow = line ?? scene; requestGameSound(); }
+  if (line !== talkingNow) { talkingNow = line; requestGameSound(); }
   // The game's CRTV coming up (or going down) changes what is asked of the game at once, not 2 s later.
   const crtvUp = Boolean(state.crtv?.active);
   if (crtvUp !== crtvUpNow) { crtvUpNow = crtvUp; requestGameSound(); }

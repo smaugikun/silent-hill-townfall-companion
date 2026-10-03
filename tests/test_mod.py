@@ -828,7 +828,6 @@ class GameSoundTest(ModTest):
         self.world.tick(4)
         self.assertEqual(self.volumes(), [0] * 4)
         self.assertTrue(self.telemetry()["audio"]["gameSoundOff"])
-        self.assertFalse(self.telemetry()["audio"]["cutsceneDialogue"])  # no dialogue mix: it stays in the game
         self.assertEqual(self.logged("[TF-AUDIO] game CRTV sound off, the phone plays it (4 sources)"), 1)
 
     def test_the_screens_video_sound_stays_unless_the_phone_plays_the_video(self):
@@ -971,86 +970,6 @@ class CutsceneTest(ModTest):
         self.assertIsNone(self.telemetry()["cutscene"])
 
 
-class CutsceneDialogueTest(ModTest):
-    """The phone plays a cutscene's dialogue track; the game's Dialoc speakers go quiet meanwhile."""
-
-    def setUp(self):
-        super().setUp()
-        self.speaker = self.world.addFmodComponent("actor")
-        self.door = self.world.addFmodComponent(None)
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.world.tick(2)
-        self.audio_file = self.commands_file.with_name("townfall-companion-audio.json")
-        self.seq = int(time.time() * 1000)
-
-    def ask(self, dialogue=True):
-        self.seq += 100
-        self.audio_file.write_text(json.dumps({"muteGame": True, "dialogue": dialogue, "seq": self.seq}))
-
-    def hear_speaker(self):
-        """A cutscene runs and a speaker talks in it: the mod knows that this is where the dialogue plays."""
-        sequence = self.world.playSequence("LS_WakeUp", 3)
-        self.speaker["playing"] = True
-        self.world.tick(1)
-        return sequence
-
-    def test_unverified_until_a_speaker_talks_in_a_cutscene(self):
-        self.assertFalse(self.telemetry()["audio"]["cutsceneDialogue"])
-        self.ask()
-        sequence = self.world.playSequence("LS_WakeUp", 3)  # nothing talks yet
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 1)
-        self.speaker["playing"] = True
-        self.world.tick(2)
-        self.assertEqual(self.logged("[TF-AUDIO] a Dialoc speaker talks in the cutscene"), 1)
-        self.assertTrue(self.telemetry()["audio"]["cutsceneDialogue"])
-
-    def test_quiet_only_in_a_cutscene_the_phone_plays(self):
-        sequence = self.hear_speaker()
-        self.ask()
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 0)
-        self.assertEqual(self.door["volume"], 1)  # not Dialoc's
-        sequence["playing"] = False
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 1)
-        self.assertEqual(self.logged("[TF-AUDIO] cutscene dialogue back on in the game"), 1)
-
-    def test_stays_quiet_when_the_phones_request_drops_out(self):
-        sequence = self.hear_speaker()
-        self.ask()
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 0)
-        self.audio_file.write_text(json.dumps({"muteGame": True, "dialogue": False, "seq": self.seq + 100}))
-        self.world.tick(1)
-        self.assertEqual(self.speaker["volume"], 0)  # between two lines, or the cutscene running again
-        self.assertEqual(self.logged("cutscene dialogue off in the game"), 1)
-        sequence["playing"] = False
-        self.world.tick(1)
-        self.assertEqual(self.speaker["volume"], 1)
-
-    def test_a_dialogue_component_and_a_late_speaker_are_silenced_too(self):
-        sequence = self.hear_speaker()
-        self.ask()
-        self.world.tick(4)
-        late = self.world.addFmodComponent("dialogue")
-        self.world.tick(1)
-        self.assertEqual(late["volume"], 0)
-
-    def test_not_when_the_phone_has_no_track_for_it(self):
-        self.hear_speaker()
-        self.ask(False)
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 1)
-
-    def test_not_outside_a_cutscene(self):
-        sequence = self.hear_speaker()
-        sequence["playing"] = False
-        self.ask()
-        self.world.tick(4)
-        self.assertEqual(self.speaker["volume"], 1)
-
-
 class NoRadioRequestsTest(ModTest):
     options = {"noRadioRequests": True}
 
@@ -1066,19 +985,6 @@ class NoRadioRequestsTest(ModTest):
         self.world.tick(2)
         self.assertFalse(self.world.radio["active"])
         self.assertEqual(self.logged("RequestRadioON/OFF failed"), 1)
-
-
-class NoDialocTest(ModTest):
-    options = {"noDialoc": True}
-
-    def test_nothing_is_silenced_and_nothing_fails(self):
-        speaker = self.world.addFmodComponent("actor")
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.world.playSequence("LS_WakeUp", 3)
-        speaker["playing"] = True
-        self.world.tick(4)
-        self.assertEqual(speaker["volume"], 1)
-        self.assertFalse(self.telemetry()["audio"]["cutsceneDialogue"])
 
 
 class PerfTest(ModTest):

@@ -39,7 +39,7 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
 The mod contains no files from the game. The companion takes the sound and videos from your own copy of the
 game, on your PC, and streams them to the phone over your home network:
 
-- **Sound:** the CRTV's sounds, the signals' voices and the cutscenes' dialogue are decoded from the game's
+- **Sound:** the CRTV's sounds and the signals' voices are decoded from the game's
   FMOD sound banks with vgmstream the first time the phone needs them, and kept in
   `TownfallCompanion\cache\sounds`.
 - **Videos:** no manual conversion step is required before playing. As soon as the companion starts, it begins converting all missing videos to small phone MP4s in the background and
