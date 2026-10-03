@@ -166,6 +166,11 @@ return function(scriptsDir, tempDir, options)
                 if self.fail then error("K2_GetActorLocation not found") end
                 return { X = self.loc.X, Y = self.loc.Y, Z = self.loc.Z }
             end,
+            AddControllerPitchInput = function(self, value)
+                if controller and not controller.locked then
+                    controller.pitch = math.max(-80, math.min(80, (controller.pitch or 0) + value))
+                end
+            end,
         })
     end
 
