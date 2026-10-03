@@ -36,6 +36,8 @@ game, on your PC, and streams them to the phone over your home network:
   keeps them in `TownfallCompanion\cache\clips`. If you reach a clip before the background job gets to it,
   that one converts immediately on request as a fallback. **`Convert Game Videos.bat` is optional**: run it
   beforehand only if you want every video cached before the game starts, so no conversion runs during play.
+  Obvious developer/test Bink assets are skipped by the automatic background pass; they remain available to the
+  request-time fallback if the game ever asks for one.
   Without the video tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
   videos on screens in cutscenes don't appear on the phone; the videos' sound then plays on the PC.
 
