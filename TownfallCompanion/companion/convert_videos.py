@@ -74,10 +74,13 @@ def decode_bink(radvideo, bk2, mp4):
     if hasattr(subprocess, "STARTUPINFO"):
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE
+        startup.wShowWindow = 0  # SW_HIDE
     result = subprocess.run([str(radvideo), "binkconv", str(bk2), str(mp4), "/o", "/#"], startupinfo=startup)
-    if result.returncode or not mp4.is_file():
-        raise Failed(f"radvideo64.exe couldn't convert it (exit code {result.returncode})")
+    # Some Townfall Binks make RAD return 8006/show an error even though it has already written a usable MP4.
+    # Treat the file as authoritative: FFmpeg immediately reads it next and will give us a real failure if
+    # the output is incomplete/corrupt. Only RAD producing no output at all is a conversion failure.
+    if not mp4.is_file() or mp4.stat().st_size == 0:
+        raise Failed(f"radvideo64.exe produced no output (exit code {result.returncode})")
 
 
 def convert(source, mp4, tools, soundtracks, bank, preset=None):
@@ -183,20 +186,11 @@ class GameVideos:
             print("Game videos: automatic pre-cache can't start: " + self.problem, flush=True)
             return
 
-        # Do not eagerly feed obvious developer/test assets to RAD. Some shipping builds contain Bink
-        # test loops that RAD's converter refuses (and may show its own Windows error dialog). Keep them
-        # indexed so request-time fallback can still try one if the game ever really asks for it.
-        todo = [key for key in sorted(self.index)
-                if "_test_" not in Path(key).stem.lower()
-                and not (self.cache_dir / Path(key)).is_file()]
+        todo = [key for key in sorted(self.index) if not (self.cache_dir / Path(key)).is_file()]
         if not todo:
             print(f"Game videos: all {len(self.index)} already cached.", flush=True)
             return
-        skipped = sum(1 for key in self.index
-                      if "_test_" in Path(key).stem.lower()
-                      and not (self.cache_dir / Path(key)).is_file())
-        extra = f"; skipped {skipped} test clip(s)" if skipped else ""
-        print(f"Game videos: pre-caching {len(todo)} missing clip(s) in the background{extra} ...", flush=True)
+        print(f"Game videos: pre-caching {len(todo)} missing clip(s) in the background ...", flush=True)
         threading.Thread(target=self._precache, args=(todo,), daemon=True, name="townfall-video-precache").start()
 
     def _precache(self, keys):
