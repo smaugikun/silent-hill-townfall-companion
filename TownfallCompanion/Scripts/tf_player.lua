@@ -27,6 +27,56 @@ function M.isTracking()
     return pawn:IsValid()
 end
 
+local function tryBool(fn)
+    local ok, value = pcall(fn)
+    return ok and type(value) == "boolean" and value or nil
+end
+
+-- Whether the gameplay pawn is alive. Townfall keeps its pawn around during some death/retry states, so
+-- "valid pawn" alone is not enough for the phone: otherwise the scanner keeps animating after Bill dies.
+-- Different builds expose this through slightly different Blueprint/native names; every probe is optional.
+function M.isAlive()
+    if not pawn:IsValid() then return false end
+
+    for _, fn in ipairs({
+        function() return pawn:IsDead() end,
+        function() return pawn:GetIsDead() end,
+        function() return pawn.bIsDead end,
+        function() return pawn.bDead end,
+    }) do
+        local dead = tryBool(fn)
+        if dead ~= nil then return not dead end
+    end
+    for _, fn in ipairs({
+        function() return pawn:IsAlive() end,
+        function() return pawn.GetIsAlive and pawn:GetIsAlive() end,
+        function() return pawn.bIsAlive end,
+    }) do
+        local alive = tryBool(fn)
+        if alive ~= nil then return alive end
+    end
+
+    for _, fn in ipairs({
+        function() return pawn.Health end,
+        function() return pawn.CurrentHealth end,
+        function() return pawn.HitPoints end,
+        function() return pawn.CurrentHP end,
+    }) do
+        local health = common.tryNumber(fn)
+        if health ~= nil then return health > 0 end
+    end
+
+    -- APlayerController commonly leaves Playing for Spectating/Inactive when its pawn dies.
+    local ok, state = pcall(function() return tostring(controller:GetStateName()) end)
+    if ok and state then
+        state = state:lower()
+        if state:find("spectat", 1, true) or state:find("inactive", 1, true) or state:find("dead", 1, true) then
+            return false
+        end
+    end
+    return true
+end
+
 -- The gameplay pawn (an ATownfallPlayerCharacter), or an invalid object in menus and while loading.
 function M.pawn()
     return pawn
@@ -46,21 +96,18 @@ end
 
 -- How far up the camera looks, in degrees (down negative). Unreal keeps it in 0..360: 350 is 10 down.
 function M.pitch()
-    return (controller:GetControlRotation().Pitch + 180) % 360 - 180
+    local pitch = common.tryNumber(function() return controller:GetControlRotation().Pitch end)
+    return pitch and ((pitch + 180) % 360 - 180) or 0
 end
 
--- Turns the player by `degrees` (clockwise) and looks up by `up` degrees (down negative; nil or 0 keeps the
--- pitch), the camera kept within PITCH_LIMIT of level. Logs when the game doesn't take the new yaw, e.g.
--- while it holds the camera (the phone's turning seemed to stop after a respawn).
-local PITCH_LIMIT = 80
-function M.turn(degrees, up)
+-- Turns the player by `degrees` (clockwise). Steering deliberately controls yaw only; forcing vertical
+-- camera input fights Townfall's own camera behaviour and feels like a free camera.
+function M.turn(degrees)
     local rotation = controller:GetControlRotation()
     local yaw = rotation.Yaw + degrees
-    local pitch = rotation.Pitch
-    if up and up ~= 0 then
-        pitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, (pitch + 180) % 360 - 180 + up))
-    end
-    controller:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = rotation.Roll })
+    controller:SetControlRotation({ Pitch = common.tryNumber(function() return rotation.Pitch end) or 0,
+                                    Yaw = yaw,
+                                    Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
     local now = controller:GetControlRotation().Yaw
     if angleDelta(now, yaw) > 1 then
         logChange("turn check", "TF-PLAYER", string.format("turn by %.1f didn't take: yaw %.1f, wanted %.1f",

@@ -158,6 +158,7 @@ export function updateSound(now) {
 const SEEK_S = 0.15;   // further off than this, jump
 const STEADY_S = 0.02; // this close is in step
 const MAX_RATE = 0.08; // catching up plays at most 8% faster or slower
+const TAKEOVER_LEAD_MS = 100; // give the game a moment to mute before phone dialogue starts
 
 // How long the phone takes to sound what it plays (Web Audio's own estimate; 0 where it has none).
 const outputDelay = () => (audio?.baseLatency || 0) + (audio?.outputLatency || 0);
@@ -168,12 +169,18 @@ function syncedTrack(folder) {
   element.preservesPitch = true;
   let started = false;    // put where the game is, once it could be
   let firstTime = null;   // the game's time in it as first read
+  let takeoverAt = null;  // when enough WAV data arrived to hand sound over from the game
   const stopped = watchStillTime();
   const track = {
     element,
     name: null,      // what plays
     drift: null,     // how far ahead of the game it plays (s), once it does
     followed: false, // the game's time in it moves, so the track keeps in step with it
+    canTakeOver() {
+      // The bridge has produced the WAV and the browser has current audio data. This is the safe point to
+      // mute the game's copy; before this, a cache miss could otherwise make a short line disappear.
+      return Boolean(track.name && !element.error && element.readyState >= 2);
+    },
     // Plays `next` (a file name in /sounds/<folder>/, or null for nothing), where the game is `time`
     // seconds in as of `at` (performance.now() ms); `held`: the game is paused. Returns what plays.
     update(next, time, at, held = false) {
@@ -183,6 +190,7 @@ function syncedTrack(folder) {
         track.followed = false;
         firstTime = null;
         started = false;
+        takeoverAt = null;
         element.playbackRate = 1;
         if (!next) {
           element.pause();
@@ -191,12 +199,19 @@ function syncedTrack(folder) {
           return null;
         }
         element.src = `/sounds/${folder}/${encodeURIComponent(next)}.wav`;
-        element.play().catch(() => {});
+        element.load();
       }
       if (!track.name || time == null || at == null || element.readyState === 0) return track.name;
+      if (track.canTakeOver() && takeoverAt == null) takeoverAt = performance.now();
       if (firstTime == null) firstTime = time;
       else if (time !== firstTime) track.followed = true;
       if (held || (track.followed && stopped.update(time, at))) {
+        if (!element.paused) element.pause();
+        return track.name;
+      }
+      // When the phone is taking sound away from the game, request the mute first, then start a fraction
+      // later. The seek below uses the current game time, so this lead does not make the dialogue late.
+      if (takeoverAt == null || (sound.muteGame && performance.now() - takeoverAt < TAKEOVER_LEAD_MS)) {
         if (!element.paused) element.pause();
         return track.name;
       }
@@ -263,8 +278,9 @@ function dialogueFor(sequence) {
 // far in, on the phone's clock) or null, whether the phone plays sound now, and whether the game is
 // paused. Returns the dialogue track playing, or null.
 export function updateDialogue(cutscene, playing, held) {
-  const track = playing && cutscene?.sequence && soundReady() ? dialogueFor(cutscene.sequence) : null;
-  return dialogue.update(track, cutscene?.sequenceTime, cutscene?.at, held);
+  const name = playing && cutscene?.sequence && soundReady() ? dialogueFor(cutscene.sequence) : null;
+  dialogue.update(name, cutscene?.sequenceTime, cutscene?.at, held);
+  return dialogue.canTakeOver() ? dialogue.name : null;
 }
 
 // The file of what a waypoint says ({line, id} from the mod: the programmer sound, else the dialogue
@@ -279,7 +295,8 @@ export function updateLine(said, playing, held) {
     lineFilter.type = said.clear ? "allpass" : "bandpass";
     lineLevel.gain.value = said.clear ? 1 : 0.6;
   }
-  return line.update(name, name ? said.ms / 1000 : null, said?.at, held);
+  line.update(name, name ? said.ms / 1000 : null, said?.at, held);
+  return line.canTakeOver() ? line.name : null;
 }
 
 // For Settings: what talks on the phone and how far ahead of the game it is ({name, drift, followed}), or null.

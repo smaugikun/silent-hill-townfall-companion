@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import config
+from convert_videos import GameVideos
 from game_sounds import GameSounds, wav_seconds
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -34,7 +35,7 @@ COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-
 
 state_lock = threading.Lock()
 telemetry = {
-    "player": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+    "player": {"x": 0.0, "y": 0.0, "yaw": 0.0, "alive": True},
     "enemies": [],
     "signals": [],
     "crtv": {"active": False, "frequency": 0.0, "signalType": "none"},
@@ -144,7 +145,7 @@ def send_to_game(commands_dir, payload):
 
 class Handler(SimpleHTTPRequestHandler):
     server_version = "TownfallCompanion/0.1"
-    clips_dir = commands_dir = sounds = None  # set by main()
+    commands_dir = sounds = videos = None  # set by main()
     # Windows' registry can map .js to text/plain, which browsers refuse for module scripts; older
     # Pythons don't know .webp.
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript", ".webp": "image/webp"}
@@ -205,7 +206,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if path.startswith("/clips/"):
-            return self._serve_media(self.clips_dir, unquote(path[len("/clips/"):]), {".mp4": "video/mp4"})
+            relative = unquote(path[len("/clips/"):])
+            media = self.videos.mp4(relative)
+            if not media:
+                return self._json({"ok": False, "error": self.videos.problem or "no such video"}, 404)
+            return self._serve_media(self.videos.cache_dir, media.relative_to(self.videos.cache_dir).as_posix(),
+                                     {".mp4": "video/mp4"})
         if path == "/sounds/sounds.json":
             catalogue = self.sounds.catalogue()
             if catalogue is None:
@@ -532,6 +538,8 @@ def main():
     parser.add_argument("--port", type=int, help="overrides port in the settings")
     parser.add_argument("--game-dir", type=Path, help="overrides game in the settings")
     parser.add_argument("--vgmstream", type=Path, help="overrides vgmstream in the settings")
+    parser.add_argument("--radvideo", type=Path, help="overrides RAD Video Tools in the settings")
+    parser.add_argument("--ffmpeg", type=Path, help="overrides FFmpeg in the settings")
     parser.add_argument("--demo", action="store_true",
                         help="for development: a simulated game while the real one isn't sending; the real game wins")
     parser.add_argument("--telemetry-file", type=Path, default=DEFAULT_TELEMETRY_FILE,
@@ -541,13 +549,16 @@ def main():
     parser.add_argument("--sound-cache", type=Path, default=config.SOUNDS_DIR,
                         help="where the game's sounds are kept once decoded")
     args = parser.parse_args()
+    console_changed = config.disable_ue4ss_console()
     settings = config.load(args.settings)
     host = args.host or settings.listen
     game_dir = args.game_dir or settings.game or config.find_game_dir()
     vgmstream = args.vgmstream or config.tool(settings, "vgmstream")
+    radvideo = args.radvideo or config.tool(settings, "radvideo")
+    ffmpeg = args.ffmpeg or config.tool(settings, "ffmpeg")
 
-    Handler.clips_dir = args.clips_dir
     Handler.commands_dir = args.telemetry_file.parent
+    Handler.videos = GameVideos(game_dir, radvideo, ffmpeg, vgmstream, args.clips_dir)
     Handler.sounds = GameSounds(game_dir, vgmstream, args.sound_cache)
     Handler.sounds.start()
     telemetry["page"] = page_version()
@@ -558,10 +569,19 @@ def main():
         demo_on.set()
         update_live()
     print(f"Townfall Companion {config.VERSION}")
+    if console_changed:
+        print("UE4SS console: disabled for the next Townfall launch (UE4SS.log still works)")
     print(f"Settings:     {settings.file}")
     print(f"Game:         {game_dir or 'not found (set game in the settings)'}")
     if game_dir:
         print("Game sounds:  reading the game's sound banks (the first time takes about 10 s)")
+    if Handler.videos.index:
+        missing = Handler.videos.missing_tools()
+        if missing:
+            print("Game videos:  cached clips work; automatic conversion needs " + "; ".join(missing))
+        else:
+            print(f"Game videos:  {len(Handler.videos.index)} found; missing clips start pre-caching now")
+            Handler.videos.start_precache()
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
     threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()
     threading.Thread(target=report_sounds, args=(Handler.sounds,), daemon=True).start()
@@ -584,6 +604,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        Handler.videos.close()
         server.server_close()
 
 

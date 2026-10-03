@@ -51,8 +51,17 @@ class BridgeTest(unittest.TestCase):
         cls.banks.mkdir(parents=True)
         for bank, names in cls.BANKS.items():
             (cls.banks / f"{bank}.bank").write_text("\n".join(names), encoding="utf-8")
+        (cls.banks / "BinkAudio.bank").write_text("Lazy\nPrecache", encoding="utf-8")
+        movie = root / "Townfall-install" / "Townfall" / "Content" / "Movies" / "CRTV_Movies" / "Bink" / "Lazy.bk2"
+        movie.parent.mkdir(parents=True)
+        movie.write_text("bink", encoding="utf-8")
+        (movie.parent / "Precache.bk2").write_text("bink precache", encoding="utf-8")
         vgmstream = root / "vgmstream.cmd"
         vgmstream.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_vgmstream.py")}" %*\n')
+        radvideo = root / "radvideo.cmd"
+        ffmpeg = root / "ffmpeg.cmd"
+        radvideo.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_video_tools.py")}" radvideo %*\n')
+        ffmpeg.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_video_tools.py")}" ffmpeg %*\n')
         (root / "secret.txt").write_text("not a clip")
         cls.telemetry = root / "game" / "townfall-companion-telemetry.json"
         cls.telemetry.parent.mkdir()
@@ -62,6 +71,7 @@ class BridgeTest(unittest.TestCase):
              "--clips-dir", str(cls.clips), "--telemetry-file", str(cls.telemetry),
              "--game-dir", str(root / "Townfall-install"), "--sound-cache", str(root / "sound-cache"),
              "--vgmstream", str(vgmstream if cls.vgmstream else root / "missing" / "vgmstream-cli.exe"),
+             "--radvideo", str(radvideo), "--ffmpeg", str(ffmpeg),
              "--settings", str(root / "companion.ini"), *cls.extra_args],
             # Not into a pipe: the bridge logs every request, and a pipe nobody reads fills up and blocks it.
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -157,6 +167,20 @@ class ClipTest(BridgeTest):
         status, headers, body = self.get("/clips/Bink/Enraged_Focused.mp4")
         self.assertEqual((status, headers["Content-Type"], body), (200, "video/mp4", self.clip_bytes))
 
+    def test_an_uncached_game_video_is_converted_once_when_requested(self):
+        path = "/clips/Bink/Lazy.mp4"
+        self.assertFalse((self.clips / "Bink" / "Lazy.mp4").exists())
+        status, headers, body = self.get(path)
+        made = json.loads(body)
+        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "copy"))
+        decoded = self.banks / "BinkAudio.bank.decoded"
+        self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
+
+        # The second request is the cached MP4: no second RAD/FFmpeg/vgmstream conversion.
+        status, _, again = self.get(path)
+        self.assertEqual((status, json.loads(again)), (200, made))
+        self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
+
     def test_byte_ranges(self):
         for header, expected in (("bytes=100-199", self.clip_bytes[100:200]),
                                  ("bytes=10000-", self.clip_bytes[10000:]),
@@ -247,6 +271,12 @@ class GameLiveTest(BridgeTest):
         self.assertEqual((state["player"]["yaw"], state["signals"]), (3, [{"id": "Clinic", "channel": 0.15}]))
         self.assertEqual(state["t"], 812.25)  # the game's clock, which the phone times speech by
         self.assertEqual(state["world"], 30.5)  # the world's, which stands still while the game is paused
+        # Going live starts one background worker that fills missing video cache entries without a phone request.
+        deadline = time.time() + 5
+        precached = self.clips / "Bink" / "Precache.mp4"
+        while not precached.is_file() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(precached.is_file())
 
 
 class TelemetryReadTest(BridgeTest):

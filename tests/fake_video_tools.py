@@ -3,7 +3,7 @@ radvideo ...` or `fake_video_tools.py ffmpeg ...`.
 
 The game's "videos" are text files; one with AUDIO in it has a sound of its own, one with BROKEN in it
 can't be decoded.
-  radvideo binkconv <in> <out.avi> /o /#   copies the text into the AVI
+  radvideo binkconv <in> <out.mp4> /o /#   copies the text into the MP4
   ffmpeg -hide_banner -i <file>             describes it on stderr, " Audio: " included if it has sound
   ffmpeg ... <out>                          writes what it was asked to do as JSON: inputs, maps, video codec
 """
@@ -13,11 +13,13 @@ from pathlib import Path
 
 tool, args = sys.argv[1], sys.argv[2:]
 if tool == "radvideo":
-    source, avi = Path(args[1]), Path(args[2])
+    source, mp4 = Path(args[1]), Path(args[2])
     text = source.read_text(encoding="utf-8")
     if "BROKEN" in text:
         sys.exit(3)
-    avi.write_text("avi of " + text, encoding="utf-8")
+    mp4.write_text("mp4 of " + text, encoding="utf-8")
+    if "WARNEXIT" in text:
+        sys.exit(7)  # RAD-style non-zero exit after successfully creating the output
 elif args == ["-hide_banner", "-i", args[-1]]:
     text = Path(args[-1]).read_text(encoding="utf-8", errors="replace")
     print("  Stream #0:0: Video: h264", file=sys.stderr)

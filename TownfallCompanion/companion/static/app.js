@@ -3,7 +3,7 @@ import { $, createGameClock, deviceHeading, devicePitch, norm180, norm360, clamp
 import { SIGNAL_RANGE, drawFineTune, drawScreen } from "./screen.js";
 import { control, letGo, onControlChange, onTelemetry, phoneShows, scannerView, setAvOut, setPutDown,
   setRaises, setSelector, setSteering, steers } from "./scanner.js";
-import { listenMotion, onPickup, onPutDown, pickup, setAutoPickup, setStandAvOut } from "./pickup.js";
+import { listenMotion, onPickup, onPutDown, pickup, setAutoPickup, setStandAvOut, wakeSteering } from "./pickup.js";
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
 import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateDialogue,
@@ -170,13 +170,19 @@ function orientationHandler(e) {
   const h = typeof e.alpha === "number" && typeof e.beta === "number" && typeof e.gamma === "number"
     ? deviceHeading(e.alpha, e.beta, e.gamma) : e.webkitCompassHeading;
   if (typeof h !== "number" || !Number.isFinite(h)) return;
+
+  const now = performance.now();
+  let moved = 0;
   if (typeof e.beta === "number" && typeof e.gamma === "number") {
     const pitch = devicePitch(e.beta, e.gamma);
-    if (sensorPitch != null && Math.abs(pitch - sensorPitch) > 0.5) phoneMovedAt = performance.now();
+    if (sensorPitch != null) moved = Math.max(moved, Math.abs(pitch - sensorPitch));
     sensorPitch = pitch;
     phonePitch ??= sensorPitch;
   }
-  if (sensorHeading != null && Math.abs(norm180(h - sensorHeading)) > 0.5) phoneMovedAt = performance.now();
+  if (sensorHeading != null) moved = Math.max(moved, Math.abs(norm180(h - sensorHeading)));
+  if (moved > 0.5) phoneMovedAt = now;
+  if (moved >= 1.0) wakeSteering();
+
   sensorHeading = h;
   if (phoneHeading == null) phoneHeading = h;
   sensorState = "on";
@@ -191,9 +197,8 @@ function smoothHeading(now) {
   if (sensorPitch != null && phonePitch != null) phonePitch += k * (sensorPitch - phonePitch);
 }
 
-// Steering (VIEW, "The phone steers your character", in hand): the player turns and looks up and
-// down with the phone, and also with the mouse, and faces somewhere new after a respawn. Whenever the phone
-// is held still, the scanner settles on where the game says the player looks (not while it moves: the
+// While steering, yaw follows the phone. The phone's tilt still controls only the scanner picture.
+// Held still, the scanner settles on where the game says the player looks (not while it moves: the
 // game's heading arrives a moment late then).
 const SETTLE_AFTER_MS = 300;
 const SETTLE_GAIN = 0.25;
@@ -285,23 +290,21 @@ function scannerPitch() {
   return (steers() ? reference.worldPitch : pitch) + phonePitch - reference.phonePitch;
 }
 
-// Steering (VIEW, "The phone steers your character", in hand): the player turns and looks up and
-// down by as much as the phone does. The phone sends its own heading and tilt and the mod turns the player
-// by the difference to the ones before (so it adds to the mouse). Held still, they go once a second anyway,
-// or the mod would take the next move as a new starting point. Put down, it stops; picked up again after
-// more than 2 s, the mod starts afresh.
+// Steering (VIEW, "The phone steers your character", in hand): yaw follows the phone by the difference
+// from the previous heading (so mouse/controller turning still adds normally). Held still, a keepalive goes
+// once a second so the next move remains continuous. Four seconds still rests steering; either the motion
+// sensor or the orientation sensor wakes it as soon as the phone moves again.
 const STEER_MS = 60;
 const STEER_KEEPALIVE_MS = 1000;
-let lastSteer = {at: 0, heading: null, pitch: null};
+let lastSteer = {at: 0, heading: null};
 function maybeSteer() {
   if (!steers() || paused || !sensorsOn || phoneHeading == null || !state.gameLive) return;
   const now = performance.now();
   if (now - lastSteer.at < STEER_MS) return;
-  const moved = lastSteer.heading == null || Math.abs(norm180(phoneHeading - lastSteer.heading)) >= 0.5
-    || Math.abs((phonePitch ?? 0) - (lastSteer.pitch ?? 0)) >= 0.5;
+  const moved = lastSteer.heading == null || Math.abs(norm180(phoneHeading - lastSteer.heading)) >= 0.5;
   if (!moved && now - lastSteer.at < STEER_KEEPALIVE_MS) return;
-  lastSteer = {at: now, heading: phoneHeading, pitch: phonePitch};
-  postControl(phonePitch == null ? {type: "steer", yaw: phoneHeading} : {type: "steer", yaw: phoneHeading, pitch: phonePitch});
+  lastSteer = {at: now, heading: phoneHeading};
+  postControl({type: "steer", yaw: phoneHeading});
 }
 
 // The tuned monster pulses, faster and stronger the closer it is and the better the phone points at it.
@@ -368,7 +371,7 @@ const phonePlays = () => control.selector === "VIEW" && sound.inView; // AV OUT:
 // phone doesn't take the sound away from the game either.
 function requestGameSound() {
   const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundReady() && bridgeOnline
-    && state.gameLive && document.visibilityState === "visible";
+    && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
   if (quiet || gameSoundAsked) {
     postControl({type: "audio", muteGame: quiet, dialogue: quiet && talkingNow != null, video: quiet && crtvVideoNow});
   }
@@ -504,13 +507,13 @@ $("setAutoPickup").addEventListener("change", (ev) => { setAutoPickup(ev.target.
 for (const radio of document.querySelectorAll('input[name="standAvOut"]')) {
   radio.addEventListener("change", () => setStandAvOut(radio.value === "avout"));
 }
-// Put down, laid flat or standing still, the phone stops turning the player. With Auto pickup the knob also
-// slides by itself: raised to VIEW, as the character raises the CRTV, laid flat to AV OUT.
+// Four seconds still rests steering; stand detection is separate and quicker. With Auto pickup, the
+// stand setting is authoritative in both directions: setting it down on a stand selects VIEW or AV OUT.
 onPutDown(setPutDown);
 onPickup((held, first, stand) => {
-  const position = held ? "VIEW" : "AV_OUT";
-  if (!pickup.auto || first || control.selector === position) return;
-  if (stand && !held && !pickup.standAvOut) return; // set on a stand: VIEW stays, unless chosen otherwise
+  if (!pickup.auto || first) return;
+  const position = stand ? (pickup.standAvOut ? "AV_OUT" : "VIEW") : held ? "VIEW" : "AV_OUT";
+  if (control.selector === position) return;
   controlHaptic("lock");
   setSelector(position);
 });
@@ -561,7 +564,7 @@ function fineTuneAt(now) {
 let knownSignals = null; // ids of the waypoint signals seen, since the baseline
 let knownFrom = null;    // whose they are: the demo's or the game's
 function announceNewSignals() {
-  if (!state.gameLive || paused) return; // one that came up in the pause menu buzzes after it
+  if (!state.gameLive || state.player?.alive === false || paused) return; // none while dead/paused
   const ids = (state.signals || []).map(s => s.id);
   if (knownSignals == null || knownFrom !== state.demo) {
     knownSignals = new Set(ids);
@@ -584,16 +587,19 @@ function onSignalType(type) {
 
 function render(now) {
   smoothHeading(now);
-  // Without the game (or the demo) coming through the bridge the CRTV is dead: no picture, no sound.
-  const live = bridgeOnline && !bridgeOutdated() && state.gameLive;
-  holdMedia = paused || (live && now - sampleArrivedAt > SAMPLE_GAP_MS);
+  // Death is not the same as lost telemetry: Townfall can keep the gameplay pawn/state alive long enough
+  // for the old scanner view to keep moving. Explicit player.alive shuts the phone CRTV down immediately.
+  const connected = bridgeOnline && !bridgeOutdated() && state.gameLive;
+  const alive = state.player?.alive !== false;
+  const live = connected && alive;
+  holdMedia = paused || !alive || (connected && now - sampleArrivedAt > SAMPLE_GAP_MS);
   const view = scannerView(state, live);
   const monsters = contacts(view.enemies.filter(e => e.tuned));
   // A monster outranks a waypoint signal; their channels shouldn't overlap anyway.
   const signal = monsters.length ? null : contacts(view.signals.filter(s => s.tuned))[0] ?? null;
   const heading = scannerHeading();
   const strongest = [...view.enemies, ...view.signals].reduce((m, s) => Math.max(m, clamp01(s.signal)), 0);
-  drawScreen(view, monsters, strongest, heading, scannerPitch(), now, clipPlaying);
+  drawScreen(view, monsters, strongest, heading, scannerPitch(), now, clipPlaying, connected && !alive);
   const tune = live && view.source === "game" && fineTuneAt(now);
   if (tune) drawFineTune(tune);
   updateDial(view);
@@ -638,9 +644,9 @@ function render(now) {
   screenText(now);
   if (!settings.hidden) renderStatus(view, monsters[0], signal, heading);
 
-  if (!paused) signalPulse(monsters[0], heading); // no buzzing in the pause menu
+  if (!paused && alive) signalPulse(monsters[0], heading); // none while paused/dead
   watchCentering(now);
-  maybeSteer();
+  if (alive) maybeSteer();
   requestAnimationFrame(render);
 }
 
@@ -696,6 +702,7 @@ onControlChange((c) => {
   if (steers() !== wasSteering && reference) {
     reference.world = Number(state.player?.yaw ?? 0);
     reference.worldPitch = Number(state.player?.pitch ?? 0);
+    lastSteer = {at: 0, heading: null};
   }
   wasSteering = steers();
   // ⌖ in VIEW, where the phone's direction counts; the hint the first time VIEW starts. Turning needs the

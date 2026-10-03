@@ -97,11 +97,28 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 
 ### No story videos, only a drawn picture
 
-The videos aren't converted yet: run `Convert Game Videos.bat`. It needs RAD Video Tools, FFmpeg and vgmstream
-in `TownfallCompanion\tools\` and names any that are missing, with where to get them (FFmpeg can also be
-installed with `winget install Gyan.FFmpeg.Essentials`). A video that **FAILED**: run it again, it retries
-only what's missing; if every video fails, unpack a fresh copy of `RADTools.7z`. Without the videos everything
-else works.
+You do **not** need to run `Convert Game Videos.bat` first. As soon as the companion starts, it begins pre-caching all missing videos automatically in one background worker, without waiting for gameplay telemetry or a save to load. If the phone requests a clip
+before the background worker reaches it, that clip converts immediately as a request-time fallback.
+
+The companion window will report the progress, for example:
+
+```text
+Game videos: pre-caching 18 missing clip(s) in the background ...
+Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
+Game videos: pre-cache 1/18 (1 ready)
+```
+
+The automatic converter uses RAD's Bink-to-AVI path internally, because that is the reliable path for
+Townfall's clips. FFmpeg immediately compresses the temporary AVI into the cached phone MP4, then the AVI
+is deleted. RAD and FFmpeg run in the background; closing the companion stops an active conversion, and
+the next start continues with whatever clips are still missing. Background conversion also runs at reduced
+CPU priority (and FFmpeg uses one encoding thread) so on-demand phone audio/dialogue stays responsive during play.
+
+If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
+`TownfallCompanion\tools\` (FFmpeg can also be installed with
+`winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
+shortcut if you want every clip ready before starting Townfall, so no conversion work runs during play.
+If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips.
 
 ## UE4SS and the game
 
