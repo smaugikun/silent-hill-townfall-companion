@@ -56,11 +56,15 @@ local PITCH_LIMIT = 80
 function M.turn(degrees, up)
     local rotation = controller:GetControlRotation()
     local yaw = rotation.Yaw + degrees
-    local pitch = rotation.Pitch
+    -- Some Townfall PlayerController instances expose Yaw but return nil for Pitch/Roll through UE4SS.
+    -- Do not let phone tilt break yaw steering: use the last telemetry-safe camera pitch when available,
+    -- otherwise keep level. (A missing Roll is harmless; Townfall's camera does not use it here.)
+    local pitch = common.tryNumber(function() return rotation.Pitch end)
+    if pitch == nil then pitch = common.tryNumber(M.pitch) or 0 end
     if up and up ~= 0 then
         pitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, (pitch + 180) % 360 - 180 + up))
     end
-    controller:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = rotation.Roll })
+    controller:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
     local now = controller:GetControlRotation().Yaw
     if angleDelta(now, yaw) > 1 then
         logChange("turn check", "TF-PLAYER", string.format("turn by %.1f didn't take: yaw %.1f, wanted %.1f",
