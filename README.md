@@ -10,19 +10,15 @@ The mod is also available on **[Nexus Mods](https://www.nexusmods.com/silenthill
 
 ## Features
 
-- **VIEW:** the CRTV is on the phone. It shows the monsters and signals from the game on its dial and screen,
-  with their videos, and plays the CRTV's sound and the voices. Turning the phone turns the scanner's view. The
-  TUNING buttons tune the game's CRTV too, and F saves / confirms the frequency, the fine-tune mini-game included.
-- **AV OUT:** the CRTV stays on the PC with all its sound; the phone mirrors the picture or stays dark.
-- **Sound:** the phone plays the CRTV's sounds and the signals' voices. *Silence it in the game* quiets the
-  game's copy so nothing is heard twice. Only what comes out of the CRTV moves to the phone; the story cutscenes
-  stay in the game.
-- **Show the game's CRTV on the monitor** (optional): your character raises the CRTV as with L1. Off, it works
-  without showing on the monitor.
-- **The phone steers your character** (optional): in VIEW, turning the phone turns your character.
-- **Auto pickup** (optional): picking the phone up switches to VIEW, laying it flat or setting it on a stand to
-  AV OUT.
-- Pause support, vibration, a **PIN** so others on your network can't open the page, and settings for all of it.
+- **VIEW:** the CRTV is on the phone: dial, screen, monsters and signals with their videos and sound. Turn the
+  phone to look around; the TUNING buttons and F (save / confirm) control the game's CRTV, mini-game included.
+- **AV OUT:** the CRTV stays on the PC; the phone mirrors the picture or stays dark.
+- **Sound on the phone:** the CRTV's sounds and the signals' voices. *Silence it in the game* quiets the game's copy.
+  Story cutscenes stay in the game.
+- **Show the game's CRTV on the monitor** (optional): your character raises it as with L1.
+- **The phone steers your character** (optional): turn the phone in VIEW, and your character turns.
+- **Auto pickup** (optional): pick the phone up for VIEW, lay it flat or on a stand for AV OUT.
+- Pause support, vibration, and a **PIN** so others on your network can't open the page.
 
 | CRTV video | Monster scanner | Settings |
 | --- | --- | --- |
