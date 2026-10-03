@@ -171,7 +171,7 @@ class ClipTest(BridgeTest):
         self.assertFalse((self.clips / "Bink" / "Lazy.mp4").exists())
         status, headers, body = self.get(path)
         made = json.loads(body)
-        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "libx264"))
+        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "copy"))
         decoded = self.banks / "BinkAudio.bank.decoded"
         self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
 
