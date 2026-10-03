@@ -72,13 +72,15 @@ class BridgeTest(unittest.TestCase):
              "--game-dir", str(root / "Townfall-install"), "--sound-cache", str(root / "sound-cache"),
              "--vgmstream", str(vgmstream if cls.vgmstream else root / "missing" / "vgmstream-cli.exe"),
              "--radvideo", str(radvideo), "--ffmpeg", str(ffmpeg),
-             "--settings", str(root / "companion.ini"), *cls.extra_args],
+             "--settings", str(root / "companion.ini"), "--pin", "", *cls.extra_args],  # no PIN unless a test asks
             # Not into a pipe: the bridge logs every request, and a pipe nobody reads fills up and blocks it.
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
             try:
                 urllib.request.urlopen(cls.url("/api/state"), timeout=1)
                 break
+            except urllib.error.HTTPError:
+                break  # answers: with a PIN it refuses
             except OSError:
                 time.sleep(0.1)
 
@@ -408,8 +410,9 @@ class StartupTest(unittest.TestCase):
     def start(self, *args, bridge=BRIDGE):
         """Starts a bridge; its output up to the line with its address, and the port it says."""
         process = subprocess.Popen(
-            [sys.executable, "-u", str(bridge), "--host", "127.0.0.1", "--telemetry-file", str(self.root / "telemetry.json"),
-             "--sound-cache", str(self.root / "sounds"), *args],
+            [sys.executable, "-u", str(bridge), "--host", "127.0.0.1",
+             "--telemetry-file", str(self.root / f"telemetry{len(self.bridges)}.json"),  # one each: they would see each other
+             "--sound-cache", str(self.root / "sounds"), "--pin", "", *args],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.bridges.append(process)
         lines = queue.Queue()
@@ -435,6 +438,9 @@ class StartupTest(unittest.TestCase):
         self.assertIn("port = 8790", text)
         self.assertIn("listen = 0.0.0.0", text)
         self.assertIn("[paths]", text)
+        pin = [line for line in text.splitlines() if line.startswith("pin =")][0].split("=")[1].strip()
+        self.assertRegex(pin, r"^\d{6}$")  # a new settings file gets a random PIN
+        self.assertIn("autostart = 1", text)
 
     def test_the_port_comes_from_the_settings(self):
         port = free_port()
@@ -508,6 +514,18 @@ class ConfigTest(unittest.TestCase):
         unpacked.write_bytes(b"")
         self.assertEqual(self.config.find_tool("no-such-tool.exe"), unpacked)
 
+    def test_the_pin_is_digits_or_empty_and_existing_settings_have_none(self):
+        settings = self.root / "companion.ini"
+        settings.write_text("[bridge]\nport = 8790\n", encoding="utf-8")  # a file from before PINs
+        self.assertEqual(self.config.load(settings).pin, "")
+        for good in ("123456", "1234", ""):
+            settings.write_text(f"[bridge]\npin = {good}\n", encoding="utf-8")
+            self.assertEqual(self.config.load(settings).pin, good)
+        for bad in ("123", "12ab56", "1234567890123"):
+            settings.write_text(f"[bridge]\npin = {bad}\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                self.config.load(settings)
+
     def test_paths_in_the_settings(self):
         settings = self.root / "companion.ini"
         settings.write_text('[paths]\ngame = "D:\\Games\\Townfall"\nvgmstream = tools\\vgm\\vgmstream-cli.exe\n',
@@ -568,6 +586,106 @@ class ConfigTest(unittest.TestCase):
             self.config.os.replace = real_replace
         self.assertEqual(ini.read_bytes(), b"[Debug]\nConsoleEnabled = 1\n")
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["UE4SS-settings.ini"])
+
+
+class PinTest(BridgeTest):
+    extra_args = ("--pin", "123456")
+
+    def login(self, pin):
+        request = urllib.request.Request(self.url("/login"), data=json.dumps({"pin": pin}).encode(),
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as r:
+                return r.status, r.headers.get("Set-Cookie")
+        except urllib.error.HTTPError as e:
+            return e.code, None
+
+    def test_nothing_opens_without_the_pin(self):
+        status, _, body = self.get("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b'placeholder="PIN"', body)  # the PIN page, not the app
+        for path in ("/api/state", "/events", "/app.js", "/sounds/sounds.json", "/clips/Bink/Enraged_Focused.mp4"):
+            self.assertEqual(self.get(path)[0], 401, path)
+        self.assertEqual(self.post("/api/control", {"type": "crtv", "frequency": 0.4}), 401)
+        self.assertFalse((self.telemetry.parent / "townfall-companion-commands.json").exists())
+
+    def test_the_right_pin_opens_it_for_that_phone(self):
+        self.assertEqual(self.login("654321")[0], 401)
+        status, cookie = self.login("123456")
+        self.assertEqual(status, 200)
+        self.assertIn("HttpOnly", cookie)
+        mine = {"Cookie": cookie.split(";")[0]}
+        self.assertEqual(self.get("/api/state", mine)[0], 200)
+        self.assertNotIn(b'placeholder="PIN"', self.get("/", mine)[2])
+        self.assertEqual(self.get("/api/state", {"Cookie": "tfc_pin=forged"})[0], 401)
+
+
+class PinLockoutTest(PinTest):
+    def test_too_many_wrong_pins_lock_the_address_for_a_while(self):
+        for _ in range(5):
+            self.assertEqual(self.login("000000")[0], 401)
+        self.assertEqual(self.login("123456")[0], 429)  # even the right one, now
+
+
+class HeartbeatTest(BridgeTest):
+    def beat(self):
+        return json.loads((self.telemetry.parent / "townfall-companion-bridge.json").read_text(encoding="utf-8"))
+
+    def test_the_companion_says_it_is_here_and_how_many_phones_listen(self):
+        deadline = time.time() + 5
+        while not (self.telemetry.parent / "townfall-companion-bridge.json").exists() and time.time() < deadline:
+            time.sleep(0.1)
+        first = self.beat()
+        self.assertEqual((first["port"], first["phones"]), (self.port, 0))
+        self.assertLess(abs(time.time() - first["time"]), 3)
+        stream = urllib.request.urlopen(self.url("/events"), timeout=5)  # a phone opens the page
+        try:
+            time.sleep(2.2)
+            self.assertEqual(self.beat()["phones"], 1)
+        finally:
+            stream.close()
+
+    def test_a_second_companion_doesnt_start(self):
+        result = subprocess.run([sys.executable, str(BRIDGE), "--telemetry-file", str(self.telemetry),
+                                 "--settings", str(self.telemetry.parent / "second.ini"), "--pin", ""],
+                                capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already running", result.stderr)
+
+
+class CleanupTest(unittest.TestCase):
+    def test_everything_left_in_the_temp_folder_is_removed(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            telemetry = folder / "townfall-companion-telemetry.json"
+            names = ["townfall-companion-commands.json", "townfall-companion-steer.json",
+                     "townfall-companion-confirm.json", "townfall-companion-audio.json",
+                     "townfall-companion-bridge.json", "townfall-companion-game.json", "townfall-companion-bridge.tmp"]
+            for path in [telemetry, *(folder / n for n in names)]:
+                path.write_text("{}")
+            (folder / "somebody-elses.json").write_text("{}")
+            bridge.remove_ipc_files(telemetry)
+            self.assertEqual([p.name for p in folder.iterdir()], ["somebody-elses.json"])
+            bridge.remove_ipc_files(telemetry)  # nothing left: no error
+
+    def test_the_game_is_running_while_its_heartbeat_is_recent(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
+        with tempfile.TemporaryDirectory() as tmp:
+            beat = Path(tmp) / "game.json"
+            self.assertFalse(bridge.read_game_beat(beat, 90))
+            beat.write_text(json.dumps({"time": int(time.time())}))
+            self.assertTrue(bridge.read_game_beat(beat, 90))
+            beat.write_text(json.dumps({"time": int(time.time()) - 200}))
+            self.assertFalse(bridge.read_game_beat(beat, 90))
 
 
 if __name__ == "__main__":

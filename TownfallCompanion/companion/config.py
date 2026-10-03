@@ -9,6 +9,7 @@ import configparser
 import os
 import platform
 import re
+import secrets
 import shutil
 import sys
 from dataclasses import dataclass
@@ -46,6 +47,12 @@ port = 8790
 ; 0.0.0.0: the phone, and anything else on your network, can connect.
 ; 127.0.0.1: only this PC can, so the phone can't.
 listen = 0.0.0.0
+; A number (4 to 12 digits) the phone asks for once, so that not everyone on your network can open the page
+; and send the game commands. A new settings file gets a random one; empty turns it off.
+pin =
+; 1: the game starts the companion by itself (a minimized window in the taskbar), and it closes when the game does.
+; 0: start it yourself with Start Companion.bat. Read by the game's part of the mod, so it applies at the next launch.
+autostart = 1
 
 [paths]
 ; Found by themselves: set one only if the companion says it can't find it.
@@ -68,6 +75,7 @@ radvideo =
 class Settings:
     port: int
     listen: str
+    pin: str          # "": no PIN
     game: Path        # None: find it
     vgmstream: Path   # None: find it, and so on
     ffmpeg: Path
@@ -80,7 +88,8 @@ def load(path=SETTINGS_FILE):
     path = Path(path)
     if not path.exists():
         try:
-            path.write_text(DEFAULT_SETTINGS, encoding="utf-8")
+            path.write_text(DEFAULT_SETTINGS.replace("\npin =\n", f"\npin = {secrets.randbelow(10 ** 6):06d}\n"),
+                            encoding="utf-8")
         except OSError:
             pass  # a folder we can't write to: the defaults it is
     parser = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=(";",))  # "port = 8791 ; mine"
@@ -92,8 +101,12 @@ def load(path=SETTINGS_FILE):
     port = parser.get("bridge", "port").strip()
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         raise SystemExit(f"{path}: port must be a number from 1 to 65535, not {port!r}")
+    pin = parser.get("bridge", "pin").strip()
+    if pin and not (pin.isdigit() and 4 <= len(pin) <= 12):
+        raise SystemExit(f"{path}: pin must be 4 to 12 digits, or empty for none, not {pin!r}")
     paths = {key: _path(parser.get("paths", key)) for key in ("game", "vgmstream", "ffmpeg", "radvideo")}
-    return Settings(port=int(port), listen=parser.get("bridge", "listen").strip() or "0.0.0.0", file=path, **paths)
+    return Settings(port=int(port), listen=parser.get("bridge", "listen").strip() or "0.0.0.0", pin=pin, file=path,
+                    **paths)
 
 
 def _path(value):

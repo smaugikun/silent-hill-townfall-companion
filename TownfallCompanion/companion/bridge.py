@@ -2,8 +2,10 @@
 import argparse
 import errno
 import hashlib
+import hmac
 import json
 import math
+import os
 import queue
 import re
 import socket
@@ -29,6 +31,16 @@ PORT_TRIES = 20
 # Written ~10x/sec by the UE4SS mod (Scripts/main.lua).
 DEFAULT_TELEMETRY_FILE = Path(tempfile.gettempdir()) / "townfall-companion-telemetry.json"
 TELEMETRY_STALE_AFTER = 2.0
+# The companion and the mod also talk through two small heartbeat files next to the telemetry: the companion's
+# says it is here and how many phones are open (the mod then keeps reading the game only for a phone, and
+# starts the companion itself when it is not here), the game's says it is running (so a companion the game
+# started closes with it).
+HEARTBEAT_FILE = "townfall-companion-bridge.json"
+GAME_FILE = "townfall-companion-game.json"
+HEARTBEAT_EVERY = 1.0
+HEARTBEAT_FRESH_S = 4.0
+GAME_GONE_AFTER = 90.0   # a game that hasn't said it is running for this long has closed (a level load can stall it)
+GAME_WAIT_S = 180.0      # a game that never does (crashed while starting) is given this long
 MAX_BODY = 4096  # the phone's commands are tiny; more is not from the phone
 # Phone commands for the mod, next to the telemetry file: /api/control "type" -> file.
 COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-companion-steer.json",
@@ -72,6 +84,68 @@ def broadcast(payload):
         for q in dead:
             if q in clients:
                 clients.remove(q)
+
+
+def read_heartbeat(path):
+    """The heartbeat file's content if it is no older than HEARTBEAT_FRESH_S, else None."""
+    try:
+        beat = json.loads(Path(path).read_text(encoding="utf-8"))
+        if time.time() - float(beat["time"]) <= HEARTBEAT_FRESH_S:
+            return beat
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def write_heartbeat(path, port):
+    with clients_lock:
+        phones = len(clients)
+    beat = {"time": int(time.time()), "pid": os.getpid(), "port": port, "phones": phones}
+    tmp = Path(path).with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(beat), encoding="utf-8")
+        os.replace(tmp, path)  # whole or not at all: the mod reads it at any moment
+    except OSError:
+        pass  # the mod or a virus scanner holds it for a moment; the next one comes in a second
+
+
+def ipc_files(telemetry_file):
+    """Everything the companion and the mod leave in the temp folder."""
+    folder = Path(telemetry_file).parent
+    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE, HEARTBEAT_FILE.replace(".json", ".tmp")]
+    return [Path(telemetry_file), *(folder / name for name in names)]
+
+
+def remove_ipc_files(telemetry_file):
+    for path in ipc_files(telemetry_file):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def heartbeat_loop(telemetry_file, port, server, with_game):
+    """Says every second that the companion is here; with `with_game`, closes it once the game has gone."""
+    folder = Path(telemetry_file).parent
+    started, seen = time.time(), False
+    while True:
+        write_heartbeat(folder / HEARTBEAT_FILE, port)
+        if with_game:
+            if read_game_beat(folder / GAME_FILE, GAME_GONE_AFTER):
+                seen = True
+            elif seen or time.time() - started > GAME_WAIT_S:
+                print("The game has closed: closing the companion." if seen else
+                      "The game never started: closing the companion.")
+                server.shutdown()
+                return
+        time.sleep(HEARTBEAT_EVERY)
+
+
+def read_game_beat(path, within):
+    try:
+        return time.time() - float(json.loads(Path(path).read_text(encoding="utf-8"))["time"]) <= within
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def merge_telemetry(payload):
@@ -160,6 +234,30 @@ def send_to_game(commands_dir, payload):
         (commands_dir / COMMAND_FILES[payload["type"]]).write_text(json.dumps(command), encoding="utf-8")
 
 
+PIN_COOKIE = "tfc_pin"
+PIN_TRIES = 5        # wrong PINs from one address before it has to wait
+PIN_LOCK_S = 60
+pin_token = None     # set by main(): what the cookie of a phone that knows the PIN holds; None: no PIN
+pin_failures = {}    # address -> (wrong tries, locked until)
+pin_lock = threading.Lock()
+
+LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Townfall Companion</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0a09;color:#d8cfb8;
+font:16px/1.4 monospace}form{width:min(18rem,86vw);text-align:center}h1{font-size:1rem;letter-spacing:.2em}
+input,button{width:100%;box-sizing:border-box;margin-top:.8rem;padding:.8rem;font:inherit;text-align:center;
+background:#1a1713;color:inherit;border:1px solid #5a5240;border-radius:6px}p{min-height:1.4em;color:#c0604a}</style>
+</head><body><form id="f"><h1>TOWNFALL COMPANION</h1><input id="p" type="password" inputmode="numeric" autocomplete="off"
+placeholder="PIN" autofocus><button>OPEN</button><p id="m"></p></form><script>
+f.onsubmit=async e=>{e.preventDefault();const r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},
+body:JSON.stringify({pin:p.value})});if(r.ok)location.reload();else{m.textContent=r.status==429?"Too many tries, wait a minute":"Wrong PIN";p.value=""}};
+</script></body></html>"""
+
+
+def pin_cookie_value(pin):
+    return hashlib.sha256(f"townfall-companion:{pin}".encode("utf-8")).hexdigest()
+
+
 class Handler(SimpleHTTPRequestHandler):
     server_version = "TownfallCompanion/0.1"
     commands_dir = sounds = videos = None  # set by main()
@@ -183,6 +281,58 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _has_pin(self):
+        cookies = self.headers.get("Cookie", "")
+        for part in cookies.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == PIN_COOKIE and hmac.compare_digest(value, pin_token):
+                return True
+        return False
+
+    def _gate(self, path, method):
+        """True if the request may go on. With a PIN, a phone that doesn't have it yet gets the PIN page for the
+        page itself and a refusal for everything else."""
+        if pin_token is None or self._has_pin():
+            return True
+        if method == "POST" and path == "/login":
+            return True
+        if method == "GET" and path in ("/", "/index.html"):
+            raw = LOGIN_PAGE.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+        else:
+            self._json({"ok": False, "error": "PIN needed"}, 401)
+        return False
+
+    def _login(self, payload):
+        who = self.client_address[0]
+        now = time.time()
+        with pin_lock:
+            tries, until = pin_failures.get(who, (0, 0.0))
+            if until > now:
+                return self._json({"ok": False, "error": "too many tries"}, 429)
+            sent = payload.get("pin")
+            if isinstance(sent, str) and hmac.compare_digest(pin_cookie_value(sent), pin_token):
+                pin_failures.pop(who, None)
+                good = True
+            else:
+                tries += 1
+                pin_failures[who] = (0, now + PIN_LOCK_S) if tries >= PIN_TRIES else (tries, 0.0)
+                good = False
+        if not good:
+            return self._json({"ok": False, "error": "wrong PIN"}, 401)
+        raw = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Set-Cookie", f"{PIN_COOKIE}={pin_token}; Max-Age=31536000; Path=/; SameSite=Strict; HttpOnly")
+        self.end_headers()
+        self.wfile.write(raw)
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length <= 0:
@@ -194,8 +344,14 @@ class Handler(SimpleHTTPRequestHandler):
             raise ValueError("a JSON object is expected")
         return payload
 
+    def do_HEAD(self):
+        if self._gate(urlparse(self.path).path, "HEAD"):
+            super().do_HEAD()
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if not self._gate(path, "GET"):
+            return
         if path == "/api/state":  # what the phone gets, to look at in a browser when something seems off
             return self._json(snapshot())
         if path == "/events":
@@ -318,10 +474,17 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if not self._gate(path, "POST"):
+            return
         try:
             payload = self._read_json()
         except Exception as exc:
             return self._json({"ok": False, "error": f"invalid json: {exc}"}, 400)
+
+        if path == "/login":
+            if pin_token is None:
+                return self._json({"ok": True})
+            return self._login(payload)
 
         if path == "/api/control":
             kind = payload.get("type")
@@ -562,6 +725,9 @@ def main():
     parser.add_argument("--vgmstream", type=Path, help="overrides vgmstream in the settings")
     parser.add_argument("--radvideo", type=Path, help="overrides RAD Video Tools in the settings")
     parser.add_argument("--ffmpeg", type=Path, help="overrides FFmpeg in the settings")
+    parser.add_argument("--pin", help="overrides pin in the settings; empty turns the PIN off")
+    parser.add_argument("--with-game", action="store_true",
+                        help="close when the game has closed (the mod starts the companion this way)")
     parser.add_argument("--demo", action="store_true",
                         help="for development: a simulated game while the real one isn't sending; the real game wins")
     parser.add_argument("--telemetry-file", type=Path, default=DEFAULT_TELEMETRY_FILE,
@@ -576,6 +742,15 @@ def main():
     except OSError as exc:
         console_changed, console_problem = None, f"couldn't change {config.UE4SS_SETTINGS_FILE}: {exc}"
     settings = config.load(args.settings)
+    already = read_heartbeat(args.telemetry_file.parent / HEARTBEAT_FILE)
+    if already:
+        raise SystemExit(f"Townfall Companion is already running (port {already.get('port')}): use that window, "
+                         "or close it first.")
+    global pin_token
+    pin = settings.pin if args.pin is None else args.pin.strip()
+    if pin and not (pin.isdigit() and 4 <= len(pin) <= 12):
+        raise SystemExit("--pin must be 4 to 12 digits, or empty for none")
+    pin_token = pin_cookie_value(pin) if pin else None
     host = args.host or settings.listen
     game_dir = args.game_dir or settings.game or config.find_game_dir()
     vgmstream = args.vgmstream or config.tool(settings, "vgmstream")
@@ -610,6 +785,8 @@ def main():
         else:
             print(f"Game videos:  {len(Handler.videos.index)} found; missing clips start pre-caching now")
             Handler.videos.start_precache()
+    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.with_game),
+                     daemon=True).start()
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
     threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()
     threading.Thread(target=report_sounds, args=(Handler.sounds,), daemon=True).start()
@@ -627,6 +804,10 @@ def main():
             print("On the phone: this PC has no network address; connect it to the network the phone is on")
     else:
         print(f"Listening on http://{host}:{port}")
+    if pin:
+        print(f"PIN:          {pin}  (the phone asks for it once; change it in {settings.file.name})")
+    else:
+        print("PIN:          none: anyone on your network can open the page (set pin in the settings)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -634,6 +815,7 @@ def main():
     finally:
         Handler.videos.close()
         server.server_close()
+        remove_ipc_files(args.telemetry_file)
 
 
 if __name__ == "__main__":
