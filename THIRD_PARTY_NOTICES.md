@@ -44,15 +44,14 @@ Runs the companion on the PC. https://www.python.org, under the Python Software 
 Reads the game's sounds from its FMOD banks on the user's PC. https://github.com/vgmstream/vgmstream,
 under the ISC License (copyright its many authors, see its COPYING file).
 
-## Optional, not included
+## Video tools, not included
 
 Used by the companion to convert the game's videos automatically on the user's PC. When the companion starts, it pre-caches missing videos in the background; a phone request can also
-convert a not-yet-cached clip immediately as a fallback. `Convert Game Videos.bat` is only an optional
-pre-launch pre-cache step.
+convert a not-yet-cached clip immediately as a fallback. `Convert Game Videos.bat` is only a manual pre-launch pre-cache step.
 
 ### RAD Video Tools
 
-Converts the game's Bink 2 videos to MP4. By RAD Game Tools, © Epic Games, Inc.:
+Decodes the game's Bink 2 videos to a temporary AVI for FFmpeg. By RAD Game Tools, © Epic Games, Inc.:
 https://www.radgametools.com/bnkdown.htm. Downloaded by the user from RAD's site under RAD's terms.
 
 ### FFmpeg
