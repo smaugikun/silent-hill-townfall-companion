@@ -663,6 +663,25 @@ class HeartbeatTest(BridgeTest):
         self.assertIn("already running", result.stderr)
 
 
+class BannerTest(unittest.TestCase):
+    def test_the_address_and_pin_are_framed_for_the_companions_window(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
+        bridge.phone_info.clear()
+        bridge.phone_info.update(pin="123456", urls=["http://192.168.1.50:8790"])
+        banner = bridge.connect_banner()
+        self.assertIn("Open this on the phone: http://192.168.1.50:8790", banner)
+        self.assertIn("PIN: 123456", banner)
+        widths = {len(line) for line in banner.strip("\n").splitlines()}
+        self.assertEqual(len(widths), 1)  # a closed frame
+        bridge.phone_info.update(pin=None)
+        self.assertIn("PIN: none", bridge.connect_banner())
+        bridge.phone_info.clear()
+
+
 class CleanupTest(unittest.TestCase):
     def test_everything_left_in_the_temp_folder_is_removed(self):
         sys.path.insert(0, str(COMPANION))

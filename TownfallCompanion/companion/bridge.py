@@ -703,6 +703,15 @@ def page_version():
     return hashlib.sha1(listing.encode("utf-8")).hexdigest()[:12]
 
 
+def connect_banner():
+    """Where the phone connects and the PIN, framed so it stands out from the startup messages."""
+    lines = ["Open this on the phone: " + (", ".join(phone_info.get("urls", [])) or "(this PC has no network address)"),
+             "PIN: " + (phone_info["pin"] if phone_info.get("pin") else "none (set pin in the settings to ask for one)")]
+    width = max(len(line) for line in lines) + 4
+    return "\n".join(["", "+" + "-" * width + "+", *("|  " + line.ljust(width - 2) + "|" for line in lines),
+                      "+" + "-" * width + "+", ""])
+
+
 def report_sounds(sounds):
     catalogue = sounds.catalogue(timeout=300)
     if catalogue:
@@ -710,6 +719,8 @@ def report_sounds(sounds):
               f"dialogue tracks, {len(catalogue['lines'])} spoken lines (decoded as the phone asks, kept in {sounds.cache_dir})")
     else:
         print(f"Game sounds unavailable, the phone will be silent: {sounds.problem}")
+    if phone_info:
+        print(connect_banner(), end="")  # the last of the startup messages: say it again, so it isn't scrolled away
 
 
 def open_server(host, port):
@@ -813,11 +824,9 @@ def main():
     else:
         print(f"Listening on http://{host}:{port}")
     phone_info.update(pin=pin or None, urls=[f"http://{lan_ip()}:{port}"] if host == "0.0.0.0" and lan_ip() else [])
-    if pin:
-        print(f"PIN:          {pin}  (the phone asks for it once; change it in {settings.file.name})")
-    else:
-        print("PIN:          none: anyone on your network can open the page (set pin in the settings)")
-    print(f"Address and PIN again, any time: open http://127.0.0.1:{port}/info in a browser on this PC")
+    print(connect_banner(), end="")
+    print(f"The phone asks for the PIN once (change it in {settings.file.name}); "
+          f"this PC's browser shows both at http://127.0.0.1:{port}/info")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
