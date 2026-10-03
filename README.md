@@ -1,6 +1,6 @@
 # Townfall Companion
 
-![Townfall Companion](docs/images/banner.jpg)
+![Townfall Companion](docs/images/banner.webp)
 
 Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfall**: it shows what the CRTV
 shows and plays its sound and the signals' voices, and it can tune it and turn your character as if you were
