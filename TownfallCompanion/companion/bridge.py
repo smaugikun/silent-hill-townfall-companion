@@ -243,10 +243,12 @@ pin_lock = threading.Lock()
 LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Townfall Companion</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0a09;color:#d8cfb8;
-font:16px/1.4 monospace}form{width:min(18rem,86vw);text-align:center}h1{font-size:1rem;letter-spacing:.2em}
-input,button{width:100%;box-sizing:border-box;margin-top:.8rem;padding:.8rem;font:inherit;text-align:center;
-background:#1a1713;color:inherit;border:1px solid #5a5240;border-radius:6px}p{min-height:1.4em;color:#c0604a}</style>
-</head><body><form id="f"><h1>TOWNFALL COMPANION</h1><input id="p" type="password" inputmode="numeric" autocomplete="off"
+font:16px/1.4 monospace}form{width:min(24rem,92vw);text-align:center}h1{font-size:1.1rem;letter-spacing:.2em}
+input,button{width:100%;box-sizing:border-box;margin-top:1rem;padding:1.1rem;font:inherit;text-align:center;
+background:#1a1713;color:inherit;border:1px solid #5a5240;border-radius:8px}
+input{font-size:2.6rem;letter-spacing:.4em;padding-left:1.4em}button{font-size:1.5rem;letter-spacing:.2em}
+p{min-height:1.4em;font-size:1.1rem;color:#c0604a}</style>
+</head><body><form id="f"><h1>TOWNFALL COMPANION</h1><input id="p" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="off"
 placeholder="PIN" autofocus><button>OPEN</button><p id="m"></p></form><script>
 f.onsubmit=async e=>{e.preventDefault();const r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},
 body:JSON.stringify({pin:p.value})});if(r.ok)location.reload();else{m.textContent=r.status==429?"Too many tries, wait a minute":"Wrong PIN";p.value=""}};
