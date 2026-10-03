@@ -1,0 +1,18 @@
+RAD VIDEO TOOLS - reads the game's Bink 2 videos
+
+PUT THIS FILE IN THIS FOLDER:
+
+    radvideo64.exe
+
+Where to get it: https://www.radgametools.com/bnkdown.htm - download "RADTools.7z" (tested with 2026.06)
+and extract it into this folder (or just copy radvideo64.exe out of it).
+RADTools.7z is a 7-Zip archive: Windows 11 opens it (right-click, Extract All);
+on Windows 10 use 7-Zip, https://www.7-zip.org
+
+Not needed (leave it or delete it): binkplay.exe and anything else in the archive.
+
+It is right when this file exists (or in a folder inside this one):
+    ...\ue4ss\Mods\TownfallCompanion\tools\radtools\radvideo64.exe
+
+The videos also need ffmpeg.exe (see the ffmpeg folder).
+Without radvideo64.exe and ffmpeg.exe the phone shows no game videos.

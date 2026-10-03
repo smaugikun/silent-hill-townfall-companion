@@ -1,14 +1,18 @@
 FFMPEG - makes the game's videos small enough for the phone
 
-Put here:   ffmpeg.exe
-            In the download it is in the "bin" folder. You can also unzip the whole download
-            into this folder.
+PUT THIS FILE IN THIS FOLDER:
 
-Download:   https://www.gyan.dev/ffmpeg/builds/  ("ffmpeg-release-essentials.zip"; tested with 9.0.2)
-            Or install it with this command (then you can leave this folder empty):
-                winget install Gyan.FFmpeg.Essentials
+    ffmpeg.exe
 
-When it is right, this file exists (or ffmpeg is installed and on the PATH):
-            TownfallCompanion\tools\ffmpeg\ffmpeg.exe
+Where to get it: https://www.gyan.dev/ffmpeg/builds/ - "ffmpeg-release-essentials.zip" (tested with 9.0.2).
+In the zip, ffmpeg.exe is in the "bin" folder.
+Or install it with this command, then this folder can stay empty (the companion finds it on the PATH):
+    winget install Gyan.FFmpeg.Essentials
 
-The videos also need rad (see the rad folder). Without them the phone shows no game videos.
+Not needed (leave them or delete them): ffprobe.exe, ffplay.exe and everything else in the download.
+
+It is right when this file exists (or ffmpeg is installed and on the PATH):
+    ...\ue4ss\Mods\TownfallCompanion\tools\ffmpeg\ffmpeg.exe
+
+The videos also need radvideo64.exe (see the radtools folder).
+Without ffmpeg.exe and radvideo64.exe the phone shows no game videos.

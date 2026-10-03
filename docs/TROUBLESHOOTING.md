@@ -41,10 +41,18 @@ changing:
   Only needed when the window says **"Townfall not found"**, **"the game's sound banks not found"** or
   **"The game's videos aren't in …"**.
 - `vgmstream`, `ffmpeg`, `radvideo`: a tool's full path, if it isn't in its folder under `tools\` (`vgmstream\`,
-  `ffmpeg\`, `rad\`; each has a `PUT FILES HERE.txt`) or on the PATH.
+  `ffmpeg\`, `radtools\`; each has a `PUT FILES HERE.txt`) or on the PATH.
 
 If the window complains about `companion.ini` itself, fix that line, or delete the file: the next start writes
 it again with the defaults.
+
+### "Missing tools" (or "missing vgmstream-cli.exe"), but I put the files in
+
+The companion looks only in the `tools` folder next to its own `companion` folder, and the window prints that
+path. Put the three folders there, each with the files its `PUT FILES HERE.txt` lists: `vgmstream\` (`vgmstream-cli.exe`
+and its `.dll` files), `radtools\` (`radvideo64.exe`) and `ffmpeg\` (`ffmpeg.exe`). If the printed path has
+`TownfallCompanion` twice (`...\Mods\TownfallCompanion\TownfallCompanion\tools`), the mod folder is one level too
+deep, and UE4SS won't load it either: move it up so that `enabled.txt` is in `...\Mods\TownfallCompanion\`.
 
 ## The phone
 
@@ -115,7 +123,7 @@ is deleted. RAD and FFmpeg run in the background; closing the companion stops an
 the next start continues with whatever clips are still missing. Background conversion also runs at reduced
 CPU priority (and FFmpeg uses one encoding thread) so on-demand phone audio/dialogue stays responsive during play.
 
-If automatic conversion says a tool is missing, put RAD Video Tools in `TownfallCompanion\tools\rad\`, FFmpeg in
+If automatic conversion says a tool is missing, put RAD Video Tools in `TownfallCompanion\tools\radtools\`, FFmpeg in
 `tools\ffmpeg\` and vgmstream in `tools\vgmstream\` (each folder has a `PUT FILES HERE.txt`; FFmpeg can also be
 installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
 shortcut if you want every clip ready before starting Townfall, so no conversion work runs during play.
@@ -137,7 +145,7 @@ Townfall. After a game update, it may need an update too.
 ### `UE4SS.log` has no `[TF-COMPANION] Townfall Companion loaded`
 
 The mod isn't where UE4SS looks. It must be `...\Win64\ue4ss\Mods\TownfallCompanion\` with `enabled.txt` and
-`Scripts\main.lua` directly in it, not one folder deeper. If `ue4ss\Mods\mods.txt` lists `TownfallCompanion`, its
+`Scripts\main.lua` directly in it, not one folder deeper (not `Mods\TownfallCompanion\TownfallCompanion\`). If `ue4ss\Mods\mods.txt` lists `TownfallCompanion`, its
 line must end in `: 1`.
 
 ### `UE4SS.log` says `this UE4SS has no LoopInGameThreadWithDelay; the mod stays idle`
