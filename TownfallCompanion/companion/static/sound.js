@@ -174,6 +174,12 @@ function syncedTrack(folder) {
     name: null,      // what plays
     drift: null,     // how far ahead of the game it plays (s), once it does
     followed: false, // the game's time in it moves, so the track keeps in step with it
+    audible() {
+      // Do not tell the game to mute its copy until this element has actually started producing audio.
+      // On a cache miss the bridge may need a moment to decode the WAV; background video conversion can
+      // make that longer. Keeping the game's line audible meanwhile avoids losing short dialogue entirely.
+      return Boolean(track.name && element.readyState >= 2 && !element.paused && !element.ended);
+    },
     // Plays `next` (a file name in /sounds/<folder>/, or null for nothing), where the game is `time`
     // seconds in as of `at` (performance.now() ms); `held`: the game is paused. Returns what plays.
     update(next, time, at, held = false) {
@@ -263,8 +269,9 @@ function dialogueFor(sequence) {
 // far in, on the phone's clock) or null, whether the phone plays sound now, and whether the game is
 // paused. Returns the dialogue track playing, or null.
 export function updateDialogue(cutscene, playing, held) {
-  const track = playing && cutscene?.sequence && soundReady() ? dialogueFor(cutscene.sequence) : null;
-  return dialogue.update(track, cutscene?.sequenceTime, cutscene?.at, held);
+  const name = playing && cutscene?.sequence && soundReady() ? dialogueFor(cutscene.sequence) : null;
+  dialogue.update(name, cutscene?.sequenceTime, cutscene?.at, held);
+  return dialogue.audible() ? dialogue.name : null;
 }
 
 // The file of what a waypoint says ({line, id} from the mod: the programmer sound, else the dialogue
@@ -279,7 +286,8 @@ export function updateLine(said, playing, held) {
     lineFilter.type = said.clear ? "allpass" : "bandpass";
     lineLevel.gain.value = said.clear ? 1 : 0.6;
   }
-  return line.update(name, name ? said.ms / 1000 : null, said?.at, held);
+  line.update(name, name ? said.ms / 1000 : null, said?.at, held);
+  return line.audible() ? line.name : null;
 }
 
 // For Settings: what talks on the phone and how far ahead of the game it is ({name, drift, followed}), or null.
