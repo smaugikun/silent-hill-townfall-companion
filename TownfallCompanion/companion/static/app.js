@@ -372,8 +372,12 @@ const phonePlays = () => control.selector === "VIEW" && sound.inView; // AV OUT:
 function requestGameSound() {
   const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundReady() && bridgeOnline
     && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
+  // A waypoint's line is asked for before it starts, while the game's CRTV is up (outside a cutscene): the
+  // game's copy goes quiet in the same moment, not a round trip after, which let its first words out.
+  const linesComing = Boolean(state.crtv?.active) && !state.cutscene?.sequence;
   if (quiet || gameSoundAsked) {
-    postControl({type: "audio", muteGame: quiet, dialogue: quiet && talkingNow != null, video: quiet && crtvVideoNow});
+    postControl({type: "audio", muteGame: quiet, dialogue: quiet && (talkingNow != null || linesComing),
+      video: quiet && crtvVideoNow});
   }
   gameSoundAsked = quiet;
 }
