@@ -217,9 +217,7 @@ PIN_COOKIE = "tfc_pin"
 PIN_TRIES = 5        # wrong PINs from one address before it has to wait
 PIN_LOCK_S = 60
 pin_token = None     # set by main(): what the cookie of a phone that knows the PIN holds; None: no PIN
-phone_info = {}      # set by main(): {"urls": [...], "pin": "..."} for /info, which only this PC may open
-LOCAL = ("127.0.0.1", "::1")  # this PC: the PIN is for the others on the network
-pin_here = False     # for tests: ask this PC for the PIN too
+phone_info = {}      # set by main(): {"urls": [...], "pin": "..."} for the banner in the companion's window
 pin_failures = {}    # address -> (wrong tries, locked until)
 pin_lock = threading.Lock()
 
@@ -234,22 +232,6 @@ placeholder="PIN" autofocus><button>OPEN</button><p id="m"></p></form><script>
 f.onsubmit=async e=>{e.preventDefault();const r=await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},
 body:JSON.stringify({pin:p.value})});if(r.ok)location.reload();else{m.textContent=r.status==429?"Too many tries, wait a minute":"Wrong PIN";p.value=""}};
 </script></body></html>"""
-
-
-def info_page():
-    """What a player needs to connect the phone: its address and the PIN, for the PC's own browser."""
-    from html import escape
-    urls = "".join(f"<p class=u>{escape(u)}</p>" for u in phone_info.get("urls", [])) or "<p>no network address</p>"
-    pin = phone_info.get("pin")
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Townfall Companion</title>
-<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0a09;color:#d8cfb8;
-font:16px/1.5 monospace;text-align:center}}main{{max-width:34rem;padding:1rem}}h1{{font-size:1rem;letter-spacing:.2em}}
-.u{{font-size:1.4rem;color:#e8dfc6}}.pin{{font-size:2rem;letter-spacing:.3em;color:#e8dfc6}}</style></head><body><main>
-<h1>TOWNFALL COMPANION</h1><p>Open this address in the phone's browser (same Wi-Fi as this PC):</p>{urls}
-<p>{"PIN, asked once:" if pin else "No PIN is set: anyone on your network can open it."}</p>
-{f'<p class=pin>{escape(pin)}</p>' if pin else ''}
-<p>Bookmark the address on the phone. You can change the PIN in companion.ini.</p></main></body></html>"""
 
 
 def pin_cookie_value(pin):
@@ -290,7 +272,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _gate(self, path, method):
         """True if the request may go on. With a PIN, a phone that doesn't have it yet gets the PIN page for the
         page itself and a refusal for everything else."""
-        if pin_token is None or (self.client_address[0] in LOCAL and not pin_here) or self._has_pin():
+        if pin_token is None or self._has_pin():
             return True
         if method == "POST" and path == "/login":
             return True
@@ -349,17 +331,6 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if not self._gate(path, "GET"):
-            return
-        if path == "/info":  # the phone's address and the PIN, for a browser on this PC only
-            if self.client_address[0] not in LOCAL:
-                return self._json({"ok": False, "error": "not found"}, 404)
-            raw = info_page().encode("utf-8")
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(raw)
             return
         if path == "/api/state":  # what the phone gets, to look at in a browser when something seems off
             return self._json(snapshot())
@@ -746,7 +717,6 @@ def main():
     parser.add_argument("--radvideo", type=Path, help="overrides RAD Video Tools in the settings")
     parser.add_argument("--ffmpeg", type=Path, help="overrides FFmpeg in the settings")
     parser.add_argument("--pin", help="overrides pin in the settings; empty turns the PIN off")
-    parser.add_argument("--pin-also-here", action="store_true", help=argparse.SUPPRESS)  # tests: this PC needs the PIN too
     parser.add_argument("--demo", action="store_true",
                         help="for development: a simulated game while the real one isn't sending; the real game wins")
     parser.add_argument("--telemetry-file", type=Path, default=DEFAULT_TELEMETRY_FILE,
@@ -765,8 +735,7 @@ def main():
     if already:
         raise SystemExit(f"Townfall Companion is already running (port {already.get('port')}): use that window, "
                          "or close it first.")
-    global pin_token, pin_here
-    pin_here = args.pin_also_here
+    global pin_token
     pin = settings.pin if args.pin is None else args.pin.strip()
     if pin and not (pin.isdigit() and 4 <= len(pin) <= 12):
         raise SystemExit("--pin must be 4 to 12 digits, or empty for none")
@@ -825,8 +794,7 @@ def main():
         print(f"Listening on http://{host}:{port}")
     phone_info.update(pin=pin or None, urls=[f"http://{lan_ip()}:{port}"] if host == "0.0.0.0" and lan_ip() else [])
     print(connect_banner(), end="")
-    print(f"The phone asks for the PIN once (change it in {settings.file.name}); "
-          f"this PC's browser shows both at http://127.0.0.1:{port}/info")
+    print(f"The phone asks for the PIN once (change it in {settings.file.name}).")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

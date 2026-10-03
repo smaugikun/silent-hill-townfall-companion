@@ -125,9 +125,7 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
 2. Open **Chrome** (Android) or **Safari** (iPhone) and enter the address from the companion's window, with the
    port, e.g. `http://192.168.1.50:8790`. Bookmark it: it stays the same as long as the PC keeps its network
    address.
-3. Enter the **PIN** the companion's window shows (it is also `pin` in `companion.ini`, and at
-   `http://127.0.0.1:8790/info` in a browser on the PC); the phone remembers it. A browser on the PC itself never
-   asks for it.
+3. Enter the **PIN** the companion's window shows (it is also `pin` in `companion.ini`); the phone remembers it.
    Five wrong tries lock that phone out for a minute.
 4. Tap the screen once. Browsers play sound and vibrate only after a tap.
 5. *Android, recommended, once:* in Chrome, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
@@ -165,7 +163,7 @@ mod made too (the companion deletes its small files in the Windows temp folder w
 - **The phone can't open the page:** same Wi-Fi? Python allowed through the Windows firewall on private
   networks? Your Wi-Fi set to *Private* in Windows? Use the address the window shows, not `127.0.0.1`.
 - **"Already running":** a companion is open already (check the taskbar); use that one, or close it first.
-- **PIN forgotten:** it is in the companion's window, at `http://127.0.0.1:8790/info` in a browser on the PC, and as `pin` in `companion.ini`.
+- **PIN forgotten:** it is in the companion's window and as `pin` in `companion.ini`.
 - **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has
   `[TF-COMPANION] Townfall Companion loaded`.
 - **No sound:** tap the phone once, keep its screen on, and check the companion's window for "Game sounds
