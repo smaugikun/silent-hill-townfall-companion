@@ -56,7 +56,8 @@ game =
 ; The tools you download are looked for anywhere in the tools folder, then on the PATH.
 ; vgmstream-cli.exe reads the game's sounds; automatic video conversion needs it too.
 vgmstream =
-; ffmpeg.exe and radvideo64.exe (RAD Video Tools): the companion converts videos with them as needed.
+; ffmpeg.exe and radvideo64.exe (RAD Video Tools): videos convert automatically as needed.
+; Convert Game Videos.bat is optional; it only pre-caches them so first playback is immediate.
 ffmpeg =
 radvideo =
 """
