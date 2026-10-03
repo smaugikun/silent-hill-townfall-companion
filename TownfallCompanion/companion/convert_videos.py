@@ -15,6 +15,7 @@ import argparse
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import config
@@ -79,7 +80,7 @@ def decode_bink(radvideo, bk2, avi):
         raise Failed(f"radvideo64.exe couldn't decode it (exit code {result.returncode})")
 
 
-def convert(source, mp4, tools, soundtracks, bank):
+def convert(source, mp4, tools, soundtracks, bank, preset="medium"):
     """Makes mp4 from the game's video, with the soundtrack the game plays alongside it if it has none."""
     mp4.parent.mkdir(parents=True, exist_ok=True)
     part = mp4.with_name(mp4.stem + ".part.mp4")
@@ -97,13 +98,100 @@ def convert(source, mp4, tools, soundtracks, bank):
             if not bink and not sound:
                 shutil.copyfile(source, part)
             else:
-                encode = ["-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p"] if bink else ["-c:v", "copy"]
+                encode = ["-c:v", "libx264", "-preset", preset, "-crf", "23", "-pix_fmt", "yuv420p"] if bink else ["-c:v", "copy"]
                 run([tools["ffmpeg"], "-hide_banner", "-loglevel", "error", "-y", "-i", video,
                      *(["-i", sound, "-map", "0:v", "-map", "1:a"] if sound else ["-map", "0:v", "-map", "0:a?"]),
                      *encode, "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", part])
         part.replace(mp4)
     finally:
         part.unlink(missing_ok=True)
+
+
+class GameVideos:
+    """Townfall's videos for the phone, converted from the user's game only when requested.
+
+    Existing MP4s in cache_dir are always usable, even if the game or conversion tools are unavailable.
+    A missing clip is looked up in the game's Movies folders, converted under a per-file lock, then atomically
+    renamed into the cache. Concurrent browser range requests therefore never see a half-written MP4.
+    """
+
+    def __init__(self, game_dir, radvideo, ffmpeg, vgmstream, cache_dir):
+        self.game_dir = Path(game_dir) if game_dir else None
+        self.movies = self.game_dir / MOVIES if self.game_dir else None
+        self.bank = self.game_dir / BINK_AUDIO if self.game_dir else None
+        self.cache_dir = Path(cache_dir)
+        self.tools = {
+            "radvideo": Path(radvideo) if radvideo else None,
+            "ffmpeg": Path(ffmpeg) if ffmpeg else None,
+            "vgmstream": Path(vgmstream) if vgmstream else None,
+        }
+        self.index = {}
+        self.problem = None
+        self._soundtracks = None
+        self._soundtracks_lock = threading.Lock()
+        self._locks, self._locks_lock = {}, threading.Lock()
+
+        if not self.game_dir:
+            self.problem = config.NO_GAME
+        elif not (self.movies / "CRTV_Movies").is_dir():
+            self.problem = (f"The game's videos aren't in {self.movies}: set game in companion.ini to the Townfall "
+                            "install folder (the one with Townfall\\Content in it).")
+        else:
+            self.index = {relative.as_posix(): source for source, relative in videos(self.movies)}
+
+    def missing_tools(self, source=None):
+        """Descriptions of tools needed to make source (all video tools when source is omitted)."""
+        keys = ["ffmpeg", "vgmstream"]
+        if source is None or source.suffix.lower() == ".bk2":
+            keys.insert(0, "radvideo")
+        return [config.missing_tool(key, self.tools[key])
+                for key in keys if not (self.tools[key] and self.tools[key].is_file())]
+
+    def _soundtrack_map(self):
+        if self._soundtracks is None:
+            with self._soundtracks_lock:
+                if self._soundtracks is None:
+                    self._soundtracks = list_streams(self.tools["vgmstream"], self.bank) if self.bank.is_file() else {}
+        return self._soundtracks
+
+    def mp4(self, relative):
+        """Cached/converted MP4 for a /clips/ relative path, or None when it cannot be provided."""
+        relative = Path(str(relative).replace("\\", "/"))
+        if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() != ".mp4":
+            return None
+        key = relative.as_posix()
+        out = self.cache_dir / relative
+
+        # Old/manual conversions remain valid, and need no tools or game files to be present.
+        if out.is_file():
+            return out
+
+        source = self.index.get(key)
+        if not source:
+            return None
+        missing = self.missing_tools(source)
+        if missing:
+            self.problem = "missing " + "; ".join(missing)
+            return None
+
+        with self._lock(out):
+            if out.is_file():
+                return out
+            print(f"Game video: converting {key} the first time it is needed ...", flush=True)
+            try:
+                # First-use latency matters more than cache size. The manual batch converter keeps its
+                # medium preset; the bridge uses veryfast, at the same CRF, for a quicker first picture.
+                convert(source, out, self.tools, self._soundtrack_map(), self.bank, preset="veryfast")
+            except Failed as exc:
+                self.problem = f"{key}: {exc}"
+                print(f"Game video unavailable: {self.problem}", flush=True)
+                return None
+            print(f"Game video ready: {key} ({out.stat().st_size // 1024:,} KB, cached)", flush=True)
+        return out
+
+    def _lock(self, path):
+        with self._locks_lock:
+            return self._locks.setdefault(path, threading.Lock())
 
 
 def main():
