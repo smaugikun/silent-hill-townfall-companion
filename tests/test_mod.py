@@ -732,6 +732,19 @@ class SteeringTest(ModTest):
         self.assertEqual(self.world.controlRotation()[1], 70)
         self.assertEqual(self.logged("[TF-PLAYER] turned by the phone"), 1)
 
+    def test_missing_control_pitch_still_accumulates_phone_tilt(self):
+        self.play()
+        self.steer(100, pitch=10)
+        self.world.tick(1)  # first phone pose is the baseline
+        self.world.dropControlPitch()
+        self.steer(100, pitch=20)
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[0], 5)  # -5 camera pitch + 10 degrees phone tilt
+        self.world.dropControlPitch()
+        self.steer(100, pitch=30)
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[0], 15)  # another 10 degrees, not reset to zero
+
     def test_a_turn_the_game_refuses_is_logged(self):
         self.play()
         self.world.lockCamera()
