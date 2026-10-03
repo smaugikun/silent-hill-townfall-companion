@@ -6,7 +6,7 @@ Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfal
 shows, plays its sound and the signals' voices, and can tune it and turn your character. The phone needs no app,
 only its browser.
 
-Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**, where the install archive is downloaded.
+The mod is also available on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**.
 
 ## Features
 
