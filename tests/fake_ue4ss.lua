@@ -183,6 +183,7 @@ return function(scriptsDir, tempDir, options)
 
     function world.controlRotation() return controller.pitch, controller.yaw end
     function world.lookUp(pitch) controller.pitch = pitch end
+    function world.dropControlPitch() controller.pitch = nil end
     -- The game holds the camera: SetControlRotation has no effect.
     function world.lockCamera() controller.locked = true end
 
