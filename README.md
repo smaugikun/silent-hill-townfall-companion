@@ -16,9 +16,10 @@ holding it. The phone needs no app, only its browser.
   monitor.
 - **AV OUT:** the CRTV is on the PC, with all its sound; the phone mirrors the picture or stays dark, and its
   buttons still tune and press F.
-- **The phone steers your character** (optional, off by default): in VIEW, with the phone in your hand, turn
-  or tilt it and your character looks the same way; not while it is put down, lying flat or standing still on
-  a stand.
+- **The phone steers your character** (optional, off by default): in VIEW, turning the phone turns your
+  character left/right. After about **4 seconds completely still**, steering rests; pick up or move the phone
+  again and it activates automatically. Phone tilt still changes the scanner view, but does not take over
+  Townfall's vertical game camera.
 - **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
   AV OUT when it is laid flat; set on a stand, it stays in VIEW or goes to AV OUT, as chosen.
 - **Pause:** in the game's pause menu, everything on the phone holds too.
@@ -36,8 +37,9 @@ game, on your PC, and streams them to the phone over your home network:
   keeps them in `TownfallCompanion\cache\clips`. If you reach a clip before the background job gets to it,
   that one converts immediately on request as a fallback. **`Convert Game Videos.bat` is optional**: run it
   beforehand only if you want every video cached before the game starts, so no conversion runs during play.
-  Some Binks make RAD return a warning/error code after it has already created a usable MP4; the companion
-  keeps that output and lets FFmpeg validate it instead of falsely treating the clip as failed.
+  RAD runs hidden in the background using its reliable Bink-to-AVI path; FFmpeg immediately makes the small
+  cached MP4 and the temporary AVI is deleted. Closing the companion also stops an active conversion. On the
+  next start, completed MP4s are skipped and conversion continues with whatever is still missing.
   Without the video tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
   videos on screens in cutscenes don't appear on the phone; the videos' sound then plays on the PC.
 
