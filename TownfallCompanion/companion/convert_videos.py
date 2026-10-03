@@ -379,7 +379,7 @@ class GameVideos:
                         return out
                     # RAD makes a temporary AVI; FFmpeg makes the small 640x480-max phone MP4 and adds audio.
                     convert(source, out, self.tools, self._soundtrack_map(), self.bank, background=background)
-            except Failed as exc:
+            except (Failed, OSError) as exc:
                 self.problem = f"{key}: {exc}"
                 print(f"Game video unavailable: {self.problem}", flush=True)
                 return None

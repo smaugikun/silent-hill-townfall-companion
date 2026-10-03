@@ -54,7 +54,10 @@ def list_streams(vgmstream, bank):
 def decode_stream(vgmstream, bank, number, out):
     """Writes one stream of a bank as a WAV file; whether it worked."""
     # -i: once through, without vgmstream's loop repeats and fade (the phone loops the loops)
-    subprocess.run([str(vgmstream), "-i", "-s", str(number), "-o", str(out), str(bank)], capture_output=True)
+    result = subprocess.run([str(vgmstream), "-i", "-s", str(number), "-o", str(out), str(bank)], capture_output=True)
+    if result.returncode:
+        Path(out).unlink(missing_ok=True)  # a half-written file must not be kept as the sound
+        return False
     return Path(out).is_file()
 
 

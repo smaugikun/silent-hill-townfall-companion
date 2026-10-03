@@ -29,6 +29,7 @@ PORT_TRIES = 20
 # Written ~10x/sec by the UE4SS mod (Scripts/main.lua).
 DEFAULT_TELEMETRY_FILE = Path(tempfile.gettempdir()) / "townfall-companion-telemetry.json"
 TELEMETRY_STALE_AFTER = 2.0
+MAX_BODY = 4096  # the phone's commands are tiny; more is not from the phone
 # Phone commands for the mod, next to the telemetry file: /api/control "type" -> file.
 COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-companion-steer.json",
                  "confirm": "townfall-companion-confirm.json", "audio": "townfall-companion-audio.json"}
@@ -111,6 +112,14 @@ def update_live():
     broadcast(out)
 
 
+def finite(value):
+    """float(value), refusing NaN and infinity (JSON from a browser can carry them; the mod can't read them)."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("not a finite number")
+    return number
+
+
 def send_to_game(commands_dir, payload):
     """Hand a phone command to the UE4SS mod, which polls these files (tf_commands.lua)."""
     global last_command_seq
@@ -121,11 +130,11 @@ def send_to_game(commands_dir, payload):
             if not isinstance(payload["active"], bool):
                 raise ValueError("active must be true or false")
             command["active"] = payload["active"]
-        command["frequency"] = min(1.0, max(0.0, float(payload["frequency"])))
+        command["frequency"] = min(1.0, max(0.0, finite(payload["frequency"])))
     elif payload["type"] == "steer":
-        command = {"yaw": float(payload["yaw"]) % 360}
+        command = {"yaw": finite(payload["yaw"]) % 360}
         if "pitch" in payload:  # how far up the phone looks: the player looks up and down with it
-            command["pitch"] = min(90.0, max(-90.0, float(payload["pitch"])))
+            command["pitch"] = min(90.0, max(-90.0, finite(payload["pitch"])))
     elif payload["type"] == "audio":
         flags = {"dialogue": payload.get("dialogue", False), "video": payload.get("video", False)}
         if not isinstance(payload["muteGame"], bool) or not all(isinstance(v, bool) for v in flags.values()):
@@ -170,8 +179,12 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length <= 0:
             return {}
-        raw = self.rfile.read(length)
-        return json.loads(raw.decode("utf-8"))
+        if length > MAX_BODY:
+            raise ValueError("body too large")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("a JSON object is expected")
+        return payload
 
     def do_GET(self):
         path = urlparse(self.path).path
