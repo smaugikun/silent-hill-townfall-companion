@@ -172,7 +172,7 @@ class ClipTest(BridgeTest):
         self.assertFalse((self.clips / "Bink" / "Lazy.mp4").exists())
         status, headers, body = self.get(path)
         made = json.loads(body)
-        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "copy"))
+        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "libx264"))
         decoded = self.banks / "BinkAudio.bank.decoded"
         self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
 
@@ -228,7 +228,7 @@ class CommandTest(BridgeTest):
     def test_steer_command_and_rising_seq(self):
         self.post("/api/control", {"type": "steer", "yaw": 370, "pitch": -100})
         first = self.command_file("townfall-companion-steer.json")
-        self.assertEqual(first["pitch"], -90.0)  # the tilt, kept to straight down
+        self.assertEqual(list(first), ["yaw", "seq"])  # the heading only: the mod turns the player by yaw, tilt is the phone's
         self.post("/api/control", {"type": "steer", "yaw": -10})
         second = self.command_file("townfall-companion-steer.json")
         self.assertEqual((first["yaw"], second["yaw"]), (10.0, 350.0))
@@ -236,8 +236,12 @@ class CommandTest(BridgeTest):
 
     def test_bad_commands_are_refused(self):
         for body in ({"type": "crtv", "active": "yes", "frequency": 0.2}, {"type": "crtv", "active": True},
-                     {"type": "steer", "yaw": "north"}):
+                     {"type": "steer", "yaw": "north"},
+                     {"type": "steer", "yaw": "12.5"}, {"type": "steer", "yaw": True},  # numbers only
+                     {"type": "steer", "yaw": float("nan")}, {"type": "crtv", "frequency": float("inf")},
+                     {"type": "steer", "yaw": 10 ** 400}):  # too big for a float
             self.assertEqual(self.post("/api/control", body), 400, body)
+        self.assertEqual(self.post("/api/control", {"type": "steer", "yaw": 12}), 200)  # an integer is a number
 
     def test_sound_request_for_the_game(self):
         self.assertEqual(self.post("/api/control", {"type": "audio", "muteGame": True}), 200)
@@ -255,6 +259,12 @@ class CommandTest(BridgeTest):
     def test_unknown_commands_are_refused(self):
         self.assertEqual(self.post("/api/control", {"type": "calibrate", "phoneHeading": 10}), 400)
         self.assertEqual(self.post("/api/control", {"yaw": 10}), 400)
+        for kind in (["crtv"], {"crtv": 1}, 7, None):  # not even a name
+            self.assertEqual(self.post("/api/control", {"type": kind, "yaw": 10}), 400, kind)
+
+    def test_a_body_that_is_not_a_small_object_is_refused(self):
+        self.assertEqual(self.post("/api/control", ["steer", 10]), 400)
+        self.assertEqual(self.post("/api/control", {"type": "steer", "yaw": 10, "padding": "x" * 5000}), 400)
 
 
 class GameLiveTest(BridgeTest):
@@ -515,13 +525,43 @@ class ConfigTest(unittest.TestCase):
                                            b"GuiConsoleVisible = 0\r\n[Other]\r\nFoo = 1\r\n")
         self.assertFalse(self.config.disable_ue4ss_console(ini))  # already off: untouched
 
-    def test_missing_ue4ss_console_keys_are_added_to_debug(self):
+    def test_missing_ue4ss_console_keys_are_added_under_debug_in_order(self):
         ini = self.root / "UE4SS-settings.ini"
-        ini.write_bytes(b"[Debug]\nFoo = 1")
+        ini.write_bytes(b"[Debug]\nFoo = 1")  # no key, no line break at the end
         self.assertTrue(self.config.disable_ue4ss_console(ini))
-        text = ini.read_text()
-        self.assertTrue(all(f"{key} = 0" in text for key in self.config.CONSOLE_KEYS))
+        self.assertEqual(ini.read_bytes(), b"[Debug]\nConsoleEnabled = 0\nGuiConsoleEnabled = 0\n"
+                                           b"GuiConsoleVisible = 0\nFoo = 1")
+        ini.write_bytes(b"; keys the user commented out\r\n[Debug]\r\n; ConsoleEnabled = 1\r\nGuiConsoleVisible = 1\r\n")
+        self.assertTrue(self.config.disable_ue4ss_console(ini))
+        self.assertEqual(ini.read_bytes(), b"; keys the user commented out\r\n[Debug]\r\nConsoleEnabled = 0\r\n"
+                                           b"GuiConsoleEnabled = 0\r\n; ConsoleEnabled = 1\r\nGuiConsoleVisible = 0\r\n")
+
+    def test_without_a_debug_section_one_is_added_and_the_rest_is_kept(self):
+        ini = self.root / "UE4SS-settings.ini"
+        ini.write_bytes(b"[Overlay]\r\nWidth=  \r\n")  # trailing spaces stay
+        self.assertTrue(self.config.disable_ue4ss_console(ini))
+        self.assertEqual(ini.read_bytes(), b"[Overlay]\r\nWidth=  \r\n\r\n[Debug]\r\nConsoleEnabled = 0\r\n"
+                                           b"GuiConsoleEnabled = 0\r\nGuiConsoleVisible = 0\r\n")
+
+    def test_no_file_is_not_a_problem_but_an_unwritable_one_is_reported(self):
         self.assertIsNone(self.config.disable_ue4ss_console(self.root / "missing.ini"))
+        unreadable = self.root / "folder.ini"
+        unreadable.mkdir()  # reading it fails on every platform
+        with self.assertRaises(OSError):
+            self.config.disable_ue4ss_console(unreadable)
+
+    def test_a_failed_replace_leaves_the_file_and_no_scraps(self):
+        ini = self.root / "UE4SS-settings.ini"
+        ini.write_bytes(b"[Debug]\nConsoleEnabled = 1\n")
+        real_replace = self.config.os.replace
+        self.config.os.replace = lambda *args: (_ for _ in ()).throw(PermissionError("locked"))
+        try:
+            with self.assertRaises(PermissionError):
+                self.config.disable_ue4ss_console(ini)
+        finally:
+            self.config.os.replace = real_replace
+        self.assertEqual(ini.read_bytes(), b"[Debug]\nConsoleEnabled = 1\n")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["UE4SS-settings.ini"])
 
 
 if __name__ == "__main__":

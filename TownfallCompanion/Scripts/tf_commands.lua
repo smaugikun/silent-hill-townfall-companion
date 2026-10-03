@@ -1,6 +1,6 @@
 -- Commands from the phone, written by bridge.py as small JSON files in %TEMP%:
 --   townfall-companion-commands.json  {"active":true,"frequency":0.23,"seq":...}  the CRTV, while the phone controls it
---   townfall-companion-steer.json     {"yaw":132.5,"pitch":-4.0,"seq":...}       the phone's heading and tilt
+--   townfall-companion-steer.json     {"yaw":132.5,"seq":...}                    the phone's heading
 --   townfall-companion-confirm.json   {"seq":...}                                the fine-tune press (F / A)
 --   townfall-companion-audio.json     {"muteGame":true,"dialogue":true,"video":true,"seq":...} the game's CRTV
 --                                     sound (and talking, and the screen's video) quiet while the phone plays it

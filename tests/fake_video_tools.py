@@ -3,7 +3,7 @@ radvideo ...` or `fake_video_tools.py ffmpeg ...`.
 
 The game's "videos" are text files; one with AUDIO in it has a sound of its own, one with BROKEN in it
 can't be decoded.
-  radvideo binkconv <in> <out.mp4> /o /#   copies the text into the MP4
+  radvideo binkconv <in> <out.avi> /o /#   copies the text into the AVI (convert_videos.py's temporary file)
   ffmpeg -hide_banner -i <file>             describes it on stderr, " Audio: " included if it has sound
   ffmpeg ... <out>                          writes what it was asked to do as JSON: inputs, maps, video codec
 """

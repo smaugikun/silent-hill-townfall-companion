@@ -112,8 +112,9 @@ class GameSounds:
         except (OSError, ValueError, KeyError):
             pass
         streams = list_streams(self.vgmstream, bank)
-        kept.parent.mkdir(parents=True, exist_ok=True)
-        kept.write_text(json.dumps({"version": version, "streams": streams}), encoding="utf-8")
+        if streams:  # none means vgmstream failed (bank locked a moment, tool blocked): ask again next time
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_text(json.dumps({"version": version, "streams": streams}), encoding="utf-8")
         return streams
 
     def catalogue(self, timeout=30):
@@ -133,11 +134,19 @@ class GameSounds:
         out = self.cache_dir / kind / f"{name}.wav"
         with self._lock(out):
             if not out.is_file():
-                out.parent.mkdir(parents=True, exist_ok=True)
                 part = out.with_name(out.stem + ".part.wav")
-                if not decode_stream(self.vgmstream, bank, number, part):
+                try:
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    if not decode_stream(self.vgmstream, bank, number, part):
+                        return None
+                    part.replace(out)
+                except OSError as exc:
+                    print(f"Game sound {kind}/{name} couldn't be made: {exc}", flush=True)
+                    try:
+                        part.unlink(missing_ok=True)
+                    except OSError:
+                        pass  # held by something (antivirus); the next try starts over
                     return None
-                part.replace(out)
         return out
 
     def _lock(self, path):

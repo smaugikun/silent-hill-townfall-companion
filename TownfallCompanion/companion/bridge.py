@@ -113,8 +113,14 @@ def update_live():
 
 
 def finite(value):
-    """float(value), refusing NaN and infinity (JSON from a browser can carry them; the mod can't read them)."""
-    number = float(value)
+    """A JSON number as a float. Not a bool or a string (the phone only ever sends numbers), and not NaN, infinity
+    or too big for a float: the mod can't read those, and a hand-made request could carry them."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("a number is expected")
+    try:
+        number = float(value)
+    except OverflowError:
+        raise ValueError("number too large") from None
     if not math.isfinite(number):
         raise ValueError("not a finite number")
     return number
@@ -132,9 +138,7 @@ def send_to_game(commands_dir, payload):
             command["active"] = payload["active"]
         command["frequency"] = min(1.0, max(0.0, finite(payload["frequency"])))
     elif payload["type"] == "steer":
-        command = {"yaw": finite(payload["yaw"]) % 360}
-        if "pitch" in payload:  # how far up the phone looks: the player looks up and down with it
-            command["pitch"] = min(90.0, max(-90.0, finite(payload["pitch"])))
+        command = {"yaw": finite(payload["yaw"]) % 360}  # the mod turns the player by yaw only (tf_commands.lua)
     elif payload["type"] == "audio":
         flags = {"dialogue": payload.get("dialogue", False), "video": payload.get("video", False)}
         if not isinstance(payload["muteGame"], bool) or not all(isinstance(v, bool) for v in flags.values()):
@@ -316,12 +320,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"ok": False, "error": f"invalid json: {exc}"}, 400)
 
         if path == "/api/control":
-            if payload.get("type") not in COMMAND_FILES:
-                return self._json({"ok": False, "error": f"unknown command type: {payload.get('type')!r}"}, 400)
+            kind = payload.get("type")
+            if not isinstance(kind, str) or kind not in COMMAND_FILES:  # a list or object would not even hash
+                return self._json({"ok": False, "error": f"unknown command type: {kind!r}"}, 400)
             try:
                 send_to_game(self.commands_dir, payload)
             except (KeyError, TypeError, ValueError) as exc:
-                return self._json({"ok": False, "error": f"bad {payload['type']} command: {exc}"}, 400)
+                return self._json({"ok": False, "error": f"bad {kind} command: {exc}"}, 400)
             return self._json({"ok": True})
 
         return self._json({"ok": False, "error": "not found"}, 404)
@@ -562,7 +567,10 @@ def main():
     parser.add_argument("--sound-cache", type=Path, default=config.SOUNDS_DIR,
                         help="where the game's sounds are kept once decoded")
     args = parser.parse_args()
-    console_changed = config.disable_ue4ss_console()
+    try:
+        console_changed, console_problem = config.disable_ue4ss_console(), None
+    except OSError as exc:
+        console_changed, console_problem = None, f"couldn't change {config.UE4SS_SETTINGS_FILE}: {exc}"
     settings = config.load(args.settings)
     host = args.host or settings.listen
     game_dir = args.game_dir or settings.game or config.find_game_dir()
@@ -584,6 +592,9 @@ def main():
     print(f"Townfall Companion {config.VERSION}")
     if console_changed:
         print("UE4SS console: disabled for the next Townfall launch (UE4SS.log still works)")
+    elif console_problem:
+        print(f"UE4SS console: {console_problem}. To hide it, set ConsoleEnabled, GuiConsoleEnabled and "
+              "GuiConsoleVisible to 0 in that file yourself.")
     print(f"Settings:     {settings.file}")
     print(f"Game:         {game_dir or 'not found (set game in the settings)'}")
     if game_dir:

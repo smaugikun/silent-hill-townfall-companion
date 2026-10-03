@@ -86,8 +86,10 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    the game if you want every clip ready immediately and no background conversion during play.
    `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
    [7-Zip](https://www.7-zip.org).
-6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. It also disables UE4SS's separate
-   debug console window for subsequent Townfall launches; `UE4SS.log` still works normally. The first time,
+6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. Each time it starts it also switches off UE4SS's
+   debug console windows (`ConsoleEnabled`, `GuiConsoleEnabled` and `GuiConsoleVisible` in
+   `ue4ss\UE4SS-settings.ini`), which takes effect at the next Townfall launch; `UE4SS.log` still works normally.
+   To get a console back for debugging, set those three to `1` again after starting the companion. The first time,
    Windows asks whether Python may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
    `On the phone: http://192.168.1.50:8790`. Keep the window open.
 

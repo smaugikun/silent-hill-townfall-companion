@@ -86,7 +86,8 @@ class PlayerTest(ModTest):
         self.assertAlmostEqual(player["x"], PHONE_X, delta=0.01)
         self.assertAlmostEqual(player["y"], PHONE_Y, delta=0.01)
         self.assertAlmostEqual(player["yaw"], 238.9, delta=0.05)
-        self.assertEqual(sorted(player), ["pitch", "x", "y", "yaw"])  # no height: the phone is a map
+        self.assertEqual(sorted(player), ["alive", "pitch", "x", "y", "yaw"])  # no height: the phone is a map
+        self.assertIs(player["alive"], True)
         self.assertEqual(player["pitch"], -5)  # the camera, a little down
 
     def test_the_cameras_pitch_up_positive_down_negative(self):
@@ -674,20 +675,17 @@ class SteeringTest(ModTest):
         self.assertEqual(tuple(self.world.controlRotation()), (-5, 70))
         self.assertEqual(self.logged("[TF-PLAYER] turned by the phone"), 1)
 
-    def test_tilting_the_phone_looks_up_and_down_as_far(self):
+    def test_tilting_the_phone_leaves_the_games_camera_pitch_alone(self):
+        # Steering turns the player by yaw only (commits 43a48f9, 8c8bd3e): tilt is the scanner view's, on the phone.
         self.play()
-        self.steer(350, pitch=10)  # how the phone is tilted doesn't matter, only how far it tilts
+        self.steer(350, pitch=10)
         self.world.tick(1)
-        self.steer(350, pitch=25)  # 15 degrees up
+        self.steer(350, pitch=25)  # 15 degrees up on the phone
         self.world.tick(1)
-        self.assertEqual(tuple(self.world.controlRotation()), (10, 40))
-        self.steer(20, pitch=-5)   # turned 30 clockwise, 30 down
+        self.assertEqual(tuple(self.world.controlRotation()), (-5, 40))
+        self.steer(20, pitch=-5)   # turned 30 clockwise, tilted 30 down
         self.world.tick(1)
-        self.assertEqual(tuple(self.world.controlRotation()), (-20, 70))
-        self.world.lookUp(355)     # Unreal's 355 is 5 down
-        self.steer(20, pitch=-95)  # 90 further down: the camera stops 80 below level
-        self.world.tick(1)
-        self.assertEqual(self.world.controlRotation()[0], -80)
+        self.assertEqual(tuple(self.world.controlRotation()), (-5, 70))
 
     def test_a_tiny_heading_written_with_an_exponent(self):
         self.play()
@@ -731,17 +729,6 @@ class SteeringTest(ModTest):
         self.world.tick(1)
         self.assertEqual(self.world.controlRotation()[1], 70)
         self.assertEqual(self.logged("[TF-PLAYER] turned by the phone"), 1)
-
-    def test_phone_tilt_uses_the_games_pitch_input_path(self):
-        self.play()
-        self.steer(100, pitch=10)
-        self.world.tick(1)  # first phone pose is the baseline
-        self.steer(100, pitch=20)
-        self.world.tick(1)
-        self.assertEqual(self.world.controlRotation()[0], 5)  # -5 camera pitch + 10 degrees phone tilt
-        self.steer(100, pitch=30)
-        self.world.tick(1)
-        self.assertEqual(self.world.controlRotation()[0], 15)
 
     def test_a_turn_the_game_refuses_is_logged(self):
         self.play()

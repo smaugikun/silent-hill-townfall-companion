@@ -420,7 +420,10 @@ def main():
     tools = find_tools(settings)  # only needed when there is something to convert
 
     bank = game / BINK_AUDIO
-    soundtracks = list_streams(tools["vgmstream"], bank) if bank.is_file() else {}
+    try:
+        soundtracks = list_streams(tools["vgmstream"], bank) if bank.is_file() else {}
+    except OSError as exc:
+        raise SystemExit(f"{tools['vgmstream']} couldn't run: {exc}")
     if not soundtracks:
         print(f"No soundtracks in {bank}: videos without sound of their own stay silent.")
     failed = []
@@ -429,7 +432,7 @@ def main():
         try:
             mp4 = args.out / relative
             convert(source, mp4, tools, soundtracks, bank)
-        except Failed as exc:
+        except (Failed, OSError) as exc:
             failed.append(relative)
             print(f"FAILED: {exc}")
             continue

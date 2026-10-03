@@ -83,9 +83,18 @@ class NexusDescriptionTest(unittest.TestCase):
             "[list]\n[*][url=https://example.com]Site[/url]\n[/list]\n"))
         self.assertIn("a guide (docs/X.md in the download)", build.nexus_description(readme, ""))
 
+    def test_images_become_links_and_tables_become_lines(self):
+        readme = "![The banner](docs/images/b.webp)\n\n| One | Two |\n| --- | --- |\n| ![a](docs/images/a.jpg) | **b** |\n"
+        self.assertEqual(build.nexus_description(readme, "https://github.com/someone/repo"), (
+            "[url=https://github.com/someone/repo/blob/main/docs/images/b.webp]The banner[/url]\n\n"
+            "[b]One[/b] · [b]Two[/b]\n"
+            "[url=https://github.com/someone/repo/blob/main/docs/images/a.jpg]a[/url] · [b]b[/b]\n"))
+        # Without a repository the pictures are left out: the archive doesn't hold docs/images.
+        self.assertNotIn("docs/images", build.nexus_description(readme, ""))
+
     def test_the_readme_converts_without_markdown_left(self):
         text = build.nexus_description((ROOT / "README.md").read_text(encoding="utf-8"), build.REPO_URL)
-        self.assertNotRegex(text, r"(?m)\*\*|`|\]\(|^- |^\d+\. |^  ")
+        self.assertNotRegex(text, r"(?m)\*\*|`|\]\(|^- |^\d+\. |^  |^\||!\[")
         for section in ("Installation on the PC", "Setup on the phone", "Every time you play", "Troubleshooting"):
             self.assertIn(f"[size=5][b]{section}[/b][/size]", text)
 

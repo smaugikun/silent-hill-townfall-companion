@@ -104,44 +104,58 @@ def _path(value):
     return path if path.is_absolute() else MOD_DIR / path
 
 
-# UE4SS's [Debug] keys that open its console windows: the old text console and the GUI one.
+# UE4SS's [Debug] keys that open its console windows: the text console and the GUI one.
 CONSOLE_KEYS = ("ConsoleEnabled", "GuiConsoleEnabled", "GuiConsoleVisible")
+_DEBUG_SECTION = re.compile(r"(?im)^[ \t]*\[Debug\][ \t]*(?:[;#][^\r\n]*)?\r?$")
 
 
 def disable_ue4ss_console(path=None):
     """Hide UE4SS's debug console windows while keeping UE4SS.log and the in-game console mod intact.
 
     Townfall Companion is installed at ue4ss\\Mods\\TownfallCompanion, so the shared UE4SS settings file
-    is two folders above MOD_DIR. The rest of that file is kept byte for byte. Returns True if it changed
-    the file, False if the consoles were already off, None if there is no file or it can't be written.
+    is two folders above MOD_DIR. Everything else in that file stays as it is, byte for byte (line endings
+    included), and the new file replaces the old in one step, so a failure can't leave it half written.
+    Returns True if it changed the file, False if the consoles were already off, None if there is no file;
+    any other problem (no permission, a locked file) is raised as OSError for the caller to report.
     """
     path = Path(path or UE4SS_SETTINGS_FILE)
     try:
-        raw = path.read_bytes()
-        text = raw.decode("utf-8", errors="surrogateescape")
-        newline = "\r\n" if "\r\n" in text else "\n"
-        changed = text
-        for key in CONSOLE_KEYS:
-            pattern = re.compile(rf"(?im)^([ \t]*{key}[ \t]*=[ \t]*)[^;#\r\n]*?([ \t]*(?:[;#][^\r\n]*)?)(?=\r?$)", re.M)
-            if pattern.search(changed):
-                changed = pattern.sub(lambda m: m.group(1) + "0" + m.group(2), changed)
-                continue
-            section = re.search(r"(?im)^[ \t]*\[Debug\][ \t]*(?:[;#][^\r\n]*)?\r?$", changed)
-            line = f"{key} = 0{newline}"
-            if section:
-                end = changed.find("\n", section.end())
-                end = len(changed) if end < 0 else end + 1
-                if end == len(changed) and not changed.endswith("\n"):
-                    line = newline + line
-                changed = changed[:end] + line + changed[end:]
-            else:
-                changed = changed.rstrip() + newline * 2 + "[Debug]" + newline + line
-        if changed == text:
-            return False
-        path.write_bytes(changed.encode("utf-8", errors="surrogateescape"))
-        return True
-    except OSError:
+        text = path.read_bytes().decode("utf-8", errors="surrogateescape")
+    except FileNotFoundError:
         return None
+    newline = "\r\n" if "\r\n" in text else "\n"
+    changed, missing = text, []
+    for key in CONSOLE_KEYS:
+        line = re.compile(rf"(?im)^([ \t]*{re.escape(key)}[ \t]*=[ \t]*)[^;#\r\n]*?([ \t]*(?:[;#][^\r\n]*)?)(?=\r?$)")
+        changed, found = line.subn(lambda m: m.group(1) + "0" + m.group(2), changed)
+        if not found:
+            missing.append(key)
+    if missing:  # absent keys count as on in UE4SS: say so, in order, under [Debug]
+        lines = "".join(f"{key} = 0{newline}" for key in missing)
+        section = _DEBUG_SECTION.search(changed)
+        if section:
+            end = changed.find("\n", section.end())
+            if end < 0:  # [Debug] is the last line and has no line break
+                changed, end = changed + newline, len(changed) + 1
+            else:
+                end += 1
+            changed = changed[:end] + lines + changed[end:]
+        else:
+            lead = "" if not changed or changed.endswith("\n") else newline
+            changed += lead + (newline if changed else "") + "[Debug]" + newline + lines
+    if changed == text:
+        return False
+    staged = path.with_name(path.name + ".tmp")
+    try:
+        staged.write_bytes(changed.encode("utf-8", errors="surrogateescape"))
+        os.replace(staged, path)
+    except OSError:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return True
 
 
 def find_game_dir():

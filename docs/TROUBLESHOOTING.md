@@ -139,6 +139,12 @@ The mod isn't where UE4SS looks. It must be `...\Win64\ue4ss\Mods\TownfallCompan
 `Scripts\main.lua` directly in it, not one folder deeper. If `ue4ss\Mods\mods.txt` lists `TownfallCompanion`, its
 line must end in `: 1`.
 
+### `UE4SS.log` says `this UE4SS has no LoopInGameThreadWithDelay; the mod stays idle`
+
+The mod loaded, but your UE4SS is older than the game-thread timers it needs (UE4SS added them in
+December 2025). Update to the newest [UE4SS for SILENT HILL Townfall](https://www.nexusmods.com/silenthilltownfall/mods/4)
+package. If that still prints this line, report it on the mod's Nexus page, with the UE4SS version it came with.
+
 ### The game feels slower
 
 Every 30 s the log has a `[TF-PERF]` line: how many ms per second of the game's time the mod used. Normal is

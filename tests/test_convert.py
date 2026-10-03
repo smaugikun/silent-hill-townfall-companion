@@ -23,7 +23,6 @@ class ConvertTest(unittest.TestCase):
         self.videos = {
             "CRTV_Movies/Bink/Silent.bk2": "bink",             # no sound of its own: the game's soundtrack goes in
             "CRTV_Movies/Bink/Loud.bk2": "bink AUDIO",         # has its own: kept
-            "CRTV_Movies/Bink/WarnExit.bk2": "bink WARNEXIT",   # RAD exits nonzero after writing output
             "Cutscene_Diegetic_Movies/Screen.mp4": "mp4 AUDIO",  # an MP4 with sound: copied as it is
             "Cutscene_Diegetic_Movies/Quiet.mp4": "mp4",       # an MP4 without: its soundtrack goes in
             "CRTV_Movies/readme.txt": "not a video",
@@ -63,24 +62,31 @@ class ConvertTest(unittest.TestCase):
         run = self.convert()
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertEqual(sorted(p.relative_to(self.out).as_posix() for p in self.out.rglob("*") if p.is_file()),
-                         ["Bink/Loud.mp4", "Bink/Silent.mp4", "Bink/WarnExit.mp4",
+                         ["Bink/Loud.mp4", "Bink/Silent.mp4",
                           "Cutscene_Diegetic_Movies/Quiet.mp4", "Cutscene_Diegetic_Movies/Screen.mp4"])
-        self.assertIn("5 of 5 videos ready for the phone.", run.stdout)
+        self.assertIn("4 of 4 videos ready for the phone.", run.stdout)
 
     def test_a_silent_bink_gets_the_soundtrack_the_game_plays_with_it(self):
         self.convert()
         self.assertEqual(self.made("Bink/Silent.mp4"),
-                         {"from": "mp4 of bink", "inputs": 2, "maps": ["0:v", "1:a"], "video": "copy"})
+                         {"from": "mp4 of bink", "inputs": 2, "maps": ["0:v", "1:a"], "video": "libx264"})  # RAD's AVI is re-encoded
 
-    def test_nonzero_rad_exit_is_ok_when_it_wrote_the_mp4(self):
+    def test_a_nonzero_rad_exit_fails_the_clip_even_when_it_wrote_something(self):
+        # Since the AVI rewrite (9f1139f) RAD's exit code counts: a RAD that failed may have left a cut-short AVI that
+        # FFmpeg still takes, and a clip made from it would be cached broken. If real RAD exits nonzero after a whole
+        # AVI for some Townfall clips, accept the output in decode_bink and turn this test around.
+        warn = self.game / "Townfall" / "Content" / "Movies" / "CRTV_Movies" / "Bink" / "WarnExit.bk2"
+        warn.write_text("bink WARNEXIT", encoding="utf-8")  # the fake RAD writes its output, then exits with 7
         run = self.convert()
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertTrue((self.out / "Bink" / "WarnExit.mp4").is_file())
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("Bink/WarnExit.mp4 ... FAILED: radvideo64.exe couldn't decode it (exit code 7)", run.stdout)
+        self.assertIn("4 of 5 videos ready for the phone.", run.stdout)
+        self.assertEqual([p.name for p in self.out.rglob("*WarnExit*")], [])  # nothing cached, nothing half-made
 
     def test_a_bink_with_its_own_sound_keeps_it(self):
         self.convert()
         self.assertEqual(self.made("Bink/Loud.mp4"),
-                         {"from": "mp4 of bink AUDIO", "inputs": 1, "maps": ["0:v", "0:a?"], "video": "copy"})
+                         {"from": "mp4 of bink AUDIO", "inputs": 1, "maps": ["0:v", "0:a?"], "video": "libx264"})
         self.assertNotIn("Loud", self.decoded())
 
     def test_the_games_mp4s(self):
@@ -104,8 +110,8 @@ class ConvertTest(unittest.TestCase):
         broken.write_text("BROKEN", encoding="utf-8")
         run = self.convert()
         self.assertEqual(run.returncode, 1)
-        self.assertIn("Bink/Broken.mp4 ... FAILED: radvideo64.exe couldn't convert it (exit code 3)", run.stdout)
-        self.assertIn("5 of 6 videos ready for the phone.", run.stdout)
+        self.assertIn("Bink/Broken.mp4 ... FAILED: radvideo64.exe couldn't decode it (exit code 3)", run.stdout)
+        self.assertIn("4 of 5 videos ready for the phone.", run.stdout)
         self.assertIn("1 failed; run this again to retry them: Bink/Broken.mp4", run.stderr)
         self.assertEqual([p.name for p in self.out.rglob("*.part.mp4")], [])  # nothing half-made left
 
@@ -126,7 +132,7 @@ class ConvertTest(unittest.TestCase):
         settings.write_text("[paths]\nradvideo = nowhere\\radvideo64.exe\n", encoding="utf-8")
         run = self.convert(settings=settings)
         self.assertEqual((run.returncode, run.stderr), (0, ""))
-        self.assertIn("All 5 videos are ready for the phone.", run.stdout)
+        self.assertIn("All 4 videos are ready for the phone.", run.stdout)
 
     def test_a_wrong_game_folder_is_said_plainly(self):
         run = self.convert("--game-dir", str(self.root / "elsewhere"))  # the last --game-dir counts
