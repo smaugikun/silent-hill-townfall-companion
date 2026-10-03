@@ -561,9 +561,9 @@ class RangeSignalTest(ModTest):
 
 
 class PhoneCommandTest(ModTest):
-    def command(self, seq, active, frequency):
+    def command(self, seq, active, frequency, animate=False):
         # Written the way bridge.py writes it.
-        self.commands_file.write_text(json.dumps({"seq": seq, "active": active, "frequency": frequency}))
+        self.commands_file.write_text(json.dumps({"seq": seq, "active": active, "animate": animate, "frequency": frequency}))
 
     def play(self, command_before_load=True):
         if command_before_load:
@@ -582,7 +582,7 @@ class PhoneCommandTest(ModTest):
         self.command(101, True, 0.23)
         self.world.tick(1)
         self.assertEqual((self.radio["active"], self.radio["frequency"]), (True, 0.23))
-        self.assertEqual(self.logged("[TF-CRTV] phone command: active=true frequency=0.230"), 1)
+        self.assertEqual(self.logged("[TF-CRTV] phone command: active=true (silent) frequency=0.230"), 1)
 
     def test_a_command_is_applied_once(self):
         self.play()
@@ -593,24 +593,37 @@ class PhoneCommandTest(ModTest):
         self.assertFalse(self.radio["active"])
         self.assertEqual(self.logged("phone command"), 1)
 
-    def test_raising_and_lowering_go_through_the_request_the_controller_runs(self):
+    def test_silently_by_default_without_the_animation(self):
         self.play()
         self.command(101, True, 0.23)
         self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), ["on"])  # RequestRadioON: Bill raises it with his animation
+        self.assertTrue(self.radio["active"])
+        self.assertEqual(list(self.radio["requests"].values()), [])  # no request: nothing shows on the monitor
+        self.assertEqual(self.logged("phone command: active=true (silent)"), 1)
         self.command(102, False, 0.23)
+        self.world.tick(1)
+        self.assertFalse(self.radio["active"])
+        self.assertEqual(list(self.radio["requests"].values()), [])
+
+    def test_animated_raising_and_lowering_go_through_the_request_the_controller_runs(self):
+        self.play()
+        self.command(101, True, 0.23, animate=True)
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["on"])  # RequestRadioON: Bill raises it with his animation
+        self.assertEqual(self.logged("phone command: active=true (animated)"), 1)
+        self.command(102, False, 0.23, animate=True)
         self.world.tick(1)
         self.assertEqual(list(self.radio["requests"].values()), ["on", "off"])
 
-    def test_a_request_the_game_hasnt_acted_on_yet_is_not_repeated_at_once(self):
+    def test_an_animated_request_the_game_hasnt_acted_on_yet_is_not_repeated_at_once(self):
         self.play()
         self.radio["ignoreRequests"] = True  # the animation takes a moment: active stays down meanwhile
-        self.command(101, True, 0.23)
+        self.command(101, True, 0.23, animate=True)
         self.world.tick(1)
-        self.command(102, True, 0.23)  # the phone says it again
+        self.command(102, True, 0.23, animate=True)  # the phone says it again
         self.world.tick(1)
         self.assertEqual(list(self.radio["requests"].values()), ["on"])
-        self.command(103, True, 0.23)
+        self.command(103, True, 0.23, animate=True)
         self.world.tick(2)  # a moment later it is asked again
         self.assertEqual(list(self.radio["requests"].values()), ["on", "on"])
 
@@ -978,10 +991,10 @@ class NoRadioRequestsTest(ModTest):
         commands.write_text(json.dumps({"active": True, "frequency": 0.5, "seq": 100}))  # left over from an earlier session
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.world.tick(3)
-        commands.write_text(json.dumps({"active": True, "frequency": 0.5, "seq": 101}))
+        commands.write_text(json.dumps({"active": True, "animate": True, "frequency": 0.5, "seq": 101}))
         self.world.tick(1)
         self.assertTrue(self.world.radio["active"])
-        commands.write_text(json.dumps({"active": False, "frequency": 0.5, "seq": 102}))
+        commands.write_text(json.dumps({"active": False, "animate": True, "frequency": 0.5, "seq": 102}))
         self.world.tick(2)
         self.assertFalse(self.world.radio["active"])
         self.assertEqual(self.logged("RequestRadioON/OFF failed"), 1)

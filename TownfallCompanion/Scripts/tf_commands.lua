@@ -1,5 +1,6 @@
 -- Commands from the phone, written by bridge.py as small JSON files in %TEMP%:
---   townfall-companion-commands.json  {"active":true,"frequency":0.23,"seq":...}  the CRTV, while the phone controls it
+--   townfall-companion-commands.json  {"active":true,"animate":true,"frequency":0.23,"seq":...}  the CRTV, while the phone
+--                                     controls it (animate: raised with the character's animation, else silently)
 --   townfall-companion-steer.json     {"yaw":132.5,"seq":...}                    the phone's heading
 --   townfall-companion-confirm.json   {"seq":...}                                the fine-tune press (F / A)
 --   townfall-companion-audio.json     {"muteGame":true,"dialogue":true,"video":true,"seq":...} the game's CRTV
@@ -75,8 +76,10 @@ function M.poll()
         if frequency and (active == nil or active == "true" or active == "false") then
             local raise = nil
             if active then raise = active == "true" end
-            crtv.apply(raise, frequency)
-            common.log("TF-CRTV", "phone command: active=%s frequency=%.3f", active or "as is", frequency)
+            local animate = text:match('"animate"%s*:%s*(%a+)') == "true"
+            crtv.apply(raise, frequency, animate)
+            common.log("TF-CRTV", "phone command: active=%s%s frequency=%.3f", active or "as is",
+                active and (animate and " (animated)" or " (silent)") or "", frequency)
         end
     end
 

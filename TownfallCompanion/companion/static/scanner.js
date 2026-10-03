@@ -4,10 +4,11 @@
 // or down, so it comes up where the phone left it; tuned in the game while it is up, the phone's needle
 // follows. The AV OUT / VIEW selector decides the rest. VIEW: the CRTV is on the phone. While the in-game
 // CRTV is up the phone shows it, the fine-tune mini-game too, and F presses the fine-tune key; while it is
-// down the phone scans by itself from the telemetry, on the same dial. With "In VIEW, switch on the game's
-// CRTV" (raises) the phone switches it on and keeps it on (put away with the controller, it comes on again;
-// not over a cutscene or the pause menu), also while the phone is put down. The character raises it with
-// his animation, as L1 does (the mod calls the same request). "Turning the phone turns the
+// down the phone scans by itself from the telemetry, on the same dial. In VIEW the phone switches the game's
+// CRTV on and keeps it on (put away with the controller, it comes on again; not over a cutscene or the pause
+// menu), also while the phone is put down. With "In VIEW, show the game's CRTV on the monitor" (raises) the
+// character raises it with his animation, as L1 does (the mod calls the same request); without, it is
+// switched on silently and nothing shows on the monitor. "Turning the phone turns the
 // character" (steering) is apart from that: in VIEW, with the phone in hand (pickup.js), turning it turns
 // the player (app.js).
 // AV OUT: the PC has the CRTV, raised and lowered with the controller; the phone shows its picture or
@@ -36,7 +37,7 @@ export const NOTCH = 0.02;
 export const control = {
   selector: "AV_OUT",  // "AV_OUT" | "VIEW"
   steering: loadFlag("tfc.sync", false), // "The phone steers your character"
-  raises: loadFlag("tfc.raise", false),  // "In VIEW, switch on the game's CRTV"
+  raises: loadFlag("tfc.raise", false),  // "In VIEW, show the game's CRTV on the monitor" (its raise animation)
   avOut: loadSetting("tfc.avOut", "picture") === "off" ? "off" : "picture", // in AV OUT: dark, or the picture
   dial: 0,             // 0..1, the phone's and the game's; the game reports 0 while lowered, the needle stays put
   tunedAt: -Infinity,  // performance.now() of the last tuning step
@@ -55,8 +56,9 @@ const changed = () => { for (const fn of listeners) fn(control); };
 
 const inView = () => control.selector === "VIEW";
 
-// The phone switches the in-game CRTV on and keeps it on: VIEW with "In VIEW, switch on the game's CRTV".
-const holdsCrtv = () => inView() && control.raises;
+// The phone switches the in-game CRTV on and keeps it on in VIEW: its voices, sound and mini-game work. Whether
+// the character shows it on the monitor, with the raise animation, is the setting "In VIEW, show the game's CRTV".
+const holdsCrtv = () => inView();
 
 // The phone steers the player: VIEW, with "The phone steers your character", the phone in hand.
 export const steers = () => inView() && control.steering && !control.putDown;
@@ -141,7 +143,8 @@ function sendCrtv(active, immediately) {
   clearTimeout(pendingSend);
   const send = () => {
     lastSent = performance.now();
-    postControl(active == null ? {type: "crtv", frequency: control.dial} : {type: "crtv", active, frequency: control.dial});
+    postControl(active == null ? {type: "crtv", frequency: control.dial}
+      : {type: "crtv", active, animate: control.raises, frequency: control.dial});
   };
   const wait = SEND_MS - (performance.now() - lastSent);
   if (immediately || wait <= 0) send();
@@ -192,10 +195,8 @@ export function setAvOut(value) {
 
 export function setRaises(on) {
   if (on === control.raises) return;
-  if (!on) letGo();
-  control.raises = on;
+  control.raises = on; // from the next raise or lowering on
   saveSetting("tfc.raise", on);
-  hold();
   changed();
 }
 

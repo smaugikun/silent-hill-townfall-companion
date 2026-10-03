@@ -111,14 +111,16 @@ function M.confirmFineTune()
     player.pawn():GetRadio():PlayerInput_FineTuneConfirm_Pressed()
 end
 
--- Raising and lowering the way the controller's L1 does: BP_Bill's own requests play the animation, and the radio's
--- active mode follows when it is done (the SDK dump has RequestRadioON and RequestRadioOFF(Force) on BP_Bill).
--- SetRadioInActiveMode alone flips the state and nothing moves. If the requests aren't there (another build of the
--- game) it is the fallback, logged once.
+-- The CRTV is switched on and off in one of two ways. Animated, as the controller's L1 does: BP_Bill's own requests
+-- play the animation, and the radio's active mode follows when it is done (the SDK dump has RequestRadioON and
+-- RequestRadioOFF(Force) on BP_Bill). Silent: SetRadioInActiveMode alone flips the state, the CRTV works (voices,
+-- sound, mini-game) and nothing shows on the monitor. If the requests aren't there (another build of the game)
+-- the silent way is the fallback for the animated, logged once.
 local REQUEST_GAP_S = 1.5 -- a raise takes a moment: asking for the same again at once would only start it over
 local lastRequest = { active = nil, at = -math.huge }
 
-local function request(pawn, active)
+local function request(pawn, active, animate)
+    if not animate then return pawn:SetRadioInActiveMode(active) end
     local now = os.clock()
     if lastRequest.active == active and now - lastRequest.at < REQUEST_GAP_S then return end
     lastRequest.active, lastRequest.at = active, now
@@ -138,9 +140,9 @@ end
 -- and sets its dial, also while it is down (it comes up there), unless the command lowers it. Uses the
 -- player character's and radio's own functions. A dial the game doesn't take while the CRTV is up is
 -- logged: the phone's needle then goes back to the game's.
-function M.apply(active, frequency)
+function M.apply(active, frequency, animate)
     local pawn = player.pawn()
-    if active ~= nil and pawn:GetIsRadioInActiveMode() ~= active then request(pawn, active) end
+    if active ~= nil and pawn:GetIsRadioInActiveMode() ~= active then request(pawn, active, animate) end
     if active == false then return end
     local wanted = math.max(0, math.min(1, frequency))
     pawn:GetRadio():SetTunedFrequency(wanted)

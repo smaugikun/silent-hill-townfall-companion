@@ -136,6 +136,10 @@ def send_to_game(commands_dir, payload):
             if not isinstance(payload["active"], bool):
                 raise ValueError("active must be true or false")
             command["active"] = payload["active"]
+            if "animate" in payload:
+                if not isinstance(payload["animate"], bool):
+                    raise ValueError("animate must be true or false")
+                command["animate"] = payload["animate"]  # the character's raise animation, or silently
         command["frequency"] = min(1.0, max(0.0, finite(payload["frequency"])))
     elif payload["type"] == "steer":
         command = {"yaw": finite(payload["yaw"]) % 360}  # the mod turns the player by yaw only (tf_commands.lua)

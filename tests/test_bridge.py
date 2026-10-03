@@ -224,6 +224,11 @@ class CommandTest(BridgeTest):
         # Without active only the dial moves (AV OUT: the phone tunes, never raises or lowers).
         self.assertEqual(self.post("/api/control", {"type": "crtv", "frequency": 0.4}), 200)
         self.assertEqual(list(self.command_file("townfall-companion-commands.json")), ["frequency", "seq"])
+        # animate: the character's raise animation, or silently.
+        self.assertEqual(self.post("/api/control", {"type": "crtv", "active": True, "animate": True, "frequency": 0.4}), 200)
+        written = self.command_file("townfall-companion-commands.json")
+        self.assertEqual(list(written), ["active", "animate", "frequency", "seq"])
+        self.assertTrue(written["animate"])
 
     def test_steer_command_and_rising_seq(self):
         self.post("/api/control", {"type": "steer", "yaw": 370, "pitch": -100})
@@ -235,7 +240,8 @@ class CommandTest(BridgeTest):
         self.assertGreater(second["seq"], first["seq"])
 
     def test_bad_commands_are_refused(self):
-        for body in ({"type": "crtv", "active": "yes", "frequency": 0.2}, {"type": "crtv", "active": True},
+        for body in ({"type": "crtv", "active": "yes", "frequency": 0.2},
+                     {"type": "crtv", "active": True, "animate": "yes", "frequency": 0.2}, {"type": "crtv", "active": True},
                      {"type": "steer", "yaw": "north"},
                      {"type": "steer", "yaw": "12.5"}, {"type": "steer", "yaw": True},  # numbers only
                      {"type": "steer", "yaw": float("nan")}, {"type": "crtv", "frequency": float("inf")},
