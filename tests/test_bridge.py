@@ -51,10 +51,11 @@ class BridgeTest(unittest.TestCase):
         cls.banks.mkdir(parents=True)
         for bank, names in cls.BANKS.items():
             (cls.banks / f"{bank}.bank").write_text("\n".join(names), encoding="utf-8")
-        (cls.banks / "BinkAudio.bank").write_text("Lazy", encoding="utf-8")
+        (cls.banks / "BinkAudio.bank").write_text("Lazy\nPrecache", encoding="utf-8")
         movie = root / "Townfall-install" / "Townfall" / "Content" / "Movies" / "CRTV_Movies" / "Bink" / "Lazy.bk2"
         movie.parent.mkdir(parents=True)
         movie.write_text("bink", encoding="utf-8")
+        (movie.parent / "Precache.bk2").write_text("bink precache", encoding="utf-8")
         vgmstream = root / "vgmstream.cmd"
         vgmstream.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_vgmstream.py")}" %*\n')
         radvideo = root / "radvideo.cmd"
@@ -270,6 +271,12 @@ class GameLiveTest(BridgeTest):
         self.assertEqual((state["player"]["yaw"], state["signals"]), (3, [{"id": "Clinic", "channel": 0.15}]))
         self.assertEqual(state["t"], 812.25)  # the game's clock, which the phone times speech by
         self.assertEqual(state["world"], 30.5)  # the world's, which stands still while the game is paused
+        # Going live starts one background worker that fills missing video cache entries without a phone request.
+        deadline = time.time() + 5
+        precached = self.clips / "Bink" / "Precache.mp4"
+        while not precached.is_file() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(precached.is_file())
 
 
 class TelemetryReadTest(BridgeTest):
