@@ -97,8 +97,9 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 
 ### No story videos, only a drawn picture
 
-You do **not** need to run `Convert Game Videos.bat` first. The companion converts a video automatically
-when the phone first needs it, then caches it. Check the companion window: if automatic conversion says a
+You do **not** need to run `Convert Game Videos.bat` first. When game telemetry becomes live, the companion
+starts pre-caching all missing videos automatically in the background. If the phone requests a clip before
+the background job reaches it, that clip converts immediately as a fallback. Check the companion window: if automatic conversion says a
 tool is missing, put RAD Video Tools, FFmpeg and vgmstream in `TownfallCompanion\tools\` (FFmpeg can also
 be installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional
 pre-cache step if you want every clip ready in advance so its first play has no conversion delay. If a video
