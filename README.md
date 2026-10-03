@@ -33,10 +33,10 @@ game, on your PC, and streams them to the phone over your home network:
 - **Sound:** the CRTV's sounds, the signals' voices and the cutscenes' dialogue are decoded from the game's
   FMOD sound banks with vgmstream the first time the phone needs them, and kept in
   `TownfallCompanion\cache\sounds`.
-- **Videos** (optional): no conversion step is required before playing. As soon as the companion starts, it begins converting all missing videos to small phone MP4s in the background and
+- **Videos:** no manual conversion step is required before playing. As soon as the companion starts, it begins converting all missing videos to small phone MP4s in the background and
   keeps them in `TownfallCompanion\cache\clips`. If you reach a clip before the background job gets to it,
-  that one converts immediately on request as a fallback. **`Convert Game Videos.bat` is optional**: run it
-  beforehand only if you want every video cached before the game starts, so no conversion runs during play.
+  that one converts immediately on request as a fallback. `Convert Game Videos.bat` is only a manual pre-cache shortcut: run it beforehand if you want every
+  video cached before the game starts, so no conversion runs during play.
   RAD runs hidden in the background using its reliable Bink-to-AVI path; FFmpeg immediately makes the small
   cached MP4 and the temporary AVI is deleted. Closing the companion also stops an active conversion. On the
   next start, completed MP4s are skipped and conversion continues with whatever is still missing.
@@ -55,7 +55,7 @@ game, on your PC, and streams them to the phone over your home network:
   PATH"** so the mod's `.bat` files can find it.
 - **[vgmstream](https://vgmstream.org)** (`vgmstream-win64.zip`, tested with r2117): reads the game's sound
   banks. Without it, the phone is silent.
-- *Optional, for the videos:* **[RAD Video Tools](https://www.radgametools.com/bnkdown.htm)** (`RADTools.7z`,
+- **[RAD Video Tools](https://www.radgametools.com/bnkdown.htm)** (`RADTools.7z`,
   tested with 2026.06) and **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** (tested with 9.0.2).
 - A phone with Chrome (Android) on the same Wi-Fi as the PC. iPhones work with
   [limits](docs/PHONE_SETUP.md#3-iphone).
@@ -73,7 +73,7 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    in it.
 4. Unpack **vgmstream** (`vgmstream-win64.zip`) into `TownfallCompanion\tools\`, e.g.
    `TownfallCompanion\tools\vgmstream\`.
-5. *Optional, for the videos:* unpack **RAD Video Tools** and **FFmpeg** into `TownfallCompanion\tools\` too.
+5. Unpack **RAD Video Tools** and **FFmpeg** into `TownfallCompanion\tools\` too.
    That's all you need: when the companion starts, it automatically pre-caches missing videos in the background—so it can work while Townfall is still at the splash screen or main menu. **You do not need to run `Convert Game Videos.bat`**. You can run it anyway before launching
    the game if you want every clip ready immediately and no background conversion during play.
    `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
