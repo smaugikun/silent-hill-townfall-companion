@@ -98,12 +98,22 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 ### No story videos, only a drawn picture
 
 You do **not** need to run `Convert Game Videos.bat` first. When game telemetry becomes live, the companion
-starts pre-caching all missing videos automatically in the background. If the phone requests a clip before
-the background job reaches it, that clip converts immediately as a fallback. Check the companion window: if automatic conversion says a
-tool is missing, put RAD Video Tools, FFmpeg and vgmstream in `TownfallCompanion\tools\` (FFmpeg can also
-be installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional
-pre-cache step if you want every clip ready in advance so its first play has no conversion delay. If a video
-reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips. Without the videos everything
+starts pre-caching all missing videos automatically in one background worker. If the phone requests a clip
+before the background worker reaches it, that clip converts immediately as a request-time fallback.
+
+The companion window will report the progress, for example:
+
+```text
+Game videos: game started; pre-caching 18 missing clip(s) in the background ...
+Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
+Game videos: pre-cache 1/18 (1 ready)
+```
+
+If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
+`TownfallCompanion\tools\` (FFmpeg can also be installed with
+`winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional pre-launch
+pre-cache step if you want every clip ready before starting Townfall, so no conversion work runs during play.
+If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips. Without the videos everything
 else works.
 
 ## UE4SS and the game
