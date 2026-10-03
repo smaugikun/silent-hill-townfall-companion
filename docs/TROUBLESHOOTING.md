@@ -108,9 +108,9 @@ Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
 Game videos: pre-cache 1/18 (1 ready)
 ```
 
-The automatic background pass skips obvious developer/test Bink assets because some of those files are not
-convertible by RAD and can show a Windows error dialog. They remain indexed and can still be attempted on demand if
-Townfall actually requests one.
+Some Townfall Binks make RAD report a non-zero exit after it has already written the MP4. The companion treats
+a non-empty output as usable and lets FFmpeg validate it; it only reports a conversion failure when RAD produces
+no output (or FFmpeg cannot read/process what RAD wrote).
 
 If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
 `TownfallCompanion\tools\` (FFmpeg can also be installed with
