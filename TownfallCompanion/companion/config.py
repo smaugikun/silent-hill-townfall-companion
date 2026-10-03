@@ -56,7 +56,7 @@ game =
 ; The tools you download are looked for anywhere in the tools folder, then on the PATH.
 ; vgmstream-cli.exe reads the game's sounds; automatic video conversion needs it too.
 vgmstream =
-; ffmpeg.exe and radvideo64.exe (RAD Video Tools): missing videos pre-cache automatically when the game starts.
+; ffmpeg.exe and radvideo64.exe (RAD Video Tools): missing videos pre-cache automatically when the companion starts.
 ; Convert Game Videos.bat is optional; it pre-caches them before launch so no conversion runs during play.
 ffmpeg =
 radvideo =
