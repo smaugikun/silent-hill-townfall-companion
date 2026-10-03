@@ -292,14 +292,14 @@ function scannerPitch() {
 // more than 2 s, the mod starts afresh.
 const STEER_MS = 60;
 const STEER_KEEPALIVE_MS = 1000;
-let lastSteer = {at: 0, heading: null, pitch: null};
+let lastSteer = {at: 0, heading: null};
 function maybeSteer() {
   if (!steers() || paused || !sensorsOn || phoneHeading == null || !state.gameLive) return;
   const now = performance.now();
   if (now - lastSteer.at < STEER_MS) return;
   const moved = lastSteer.heading == null || Math.abs(norm180(phoneHeading - lastSteer.heading)) >= 0.5;
   if (!moved && now - lastSteer.at < STEER_KEEPALIVE_MS) return;
-  lastSteer = {at: now, heading: phoneHeading, pitch: phonePitch};
+  lastSteer = {at: now, heading: phoneHeading};
   postControl({type: "steer", yaw: phoneHeading});
 }
 
@@ -503,13 +503,13 @@ $("setAutoPickup").addEventListener("change", (ev) => { setAutoPickup(ev.target.
 for (const radio of document.querySelectorAll('input[name="standAvOut"]')) {
   radio.addEventListener("change", () => setStandAvOut(radio.value === "avout"));
 }
-// Put down, laid flat or standing still, the phone stops turning the player. With Auto pickup the knob also
-// slides by itself: raised to VIEW, as the character raises the CRTV, laid flat to AV OUT.
+// Four seconds still rests steering; stand detection is separate and quicker. With Auto pickup, the
+// stand setting is authoritative in both directions: setting it down on a stand selects VIEW or AV OUT.
 onPutDown(setPutDown);
 onPickup((held, first, stand) => {
-  const position = held ? "VIEW" : "AV_OUT";
-  if (!pickup.auto || first || control.selector === position) return;
-  if (stand && !held && !pickup.standAvOut) return; // set on a stand: VIEW stays, unless chosen otherwise
+  if (!pickup.auto || first) return;
+  const position = stand ? (pickup.standAvOut ? "AV_OUT" : "VIEW") : held ? "VIEW" : "AV_OUT";
+  if (control.selector === position) return;
   controlHaptic("lock");
   setSelector(position);
 });
@@ -695,7 +695,7 @@ onControlChange((c) => {
   if (steers() !== wasSteering && reference) {
     reference.world = Number(state.player?.yaw ?? 0);
     reference.worldPitch = Number(state.player?.pitch ?? 0);
-    lastSteer = {at: 0, heading: null, pitch: null};
+    lastSteer = {at: 0, heading: null};
   }
   wasSteering = steers();
   // ⌖ in VIEW, where the phone's direction counts; the hint the first time VIEW starts. Turning needs the
