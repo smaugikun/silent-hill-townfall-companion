@@ -143,6 +143,7 @@ class GameVideos:
         self._locks, self._locks_lock = {}, threading.Lock()
         self._precache_started = False
         self._precache_lock = threading.Lock()
+        self._conversion_lock = threading.Lock()
 
         if not self.game_dir:
             self.problem = config.NO_GAME
@@ -223,8 +224,13 @@ class GameVideos:
             action = "pre-caching" if background else "converting on request"
             print(f"Game video: {action} {key} ...", flush=True)
             try:
-                # RAD writes MP4 directly; FFmpeg makes the small 640x480-max phone copy and adds audio.
-                convert(source, out, self.tools, self._soundtrack_map(), self.bank)
+                # RAD behaves like a single-user desktop converter. Never launch two conversions at once:
+                # a phone request may arrive while the background pre-cache is already working.
+                with self._conversion_lock:
+                    if out.is_file():
+                        return out
+                    # RAD writes MP4 directly; FFmpeg makes the small 640x480-max phone copy and adds audio.
+                    convert(source, out, self.tools, self._soundtrack_map(), self.bank)
             except Failed as exc:
                 self.problem = f"{key}: {exc}"
                 print(f"Game video unavailable: {self.problem}", flush=True)
