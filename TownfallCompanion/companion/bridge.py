@@ -35,7 +35,7 @@ COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-
 
 state_lock = threading.Lock()
 telemetry = {
-    "player": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+    "player": {"x": 0.0, "y": 0.0, "yaw": 0.0, "alive": True},
     "enemies": [],
     "signals": [],
     "crtv": {"active": False, "frequency": 0.0, "signalType": "none"},
