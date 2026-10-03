@@ -34,7 +34,7 @@
     <button id="btnView" class="hotspot view" aria-label="AV OUT / VIEW selector"></button>
     <button id="btnTuneDown" class="hotspot down" aria-label="Tune down"></button>
     <button id="btnTuneUp" class="hotspot up" aria-label="Tune up"></button>
-    <button id="btnKeyF" class="hotspot key" aria-label="F: fine-tune press"></button>
+    <button id="btnKeyF" class="hotspot key" aria-label="F: save / confirm tuned frequency"></button>
   </main>
 
   <button id="settingsOpen" class="cog" aria-label="Settings">⚙</button>
@@ -50,7 +50,7 @@
       <p class="note">
         VIEW: the CRTV is on the phone. Turn the phone to look around; ⌖ lines it up with your character.
         AV OUT: the CRTV is on the PC, with all its sound; the phone shows its picture or stays dark. In both,
-        the TUNING buttons and F work on the game's CRTV.
+        the TUNING buttons tune the game's CRTV, and F saves / confirms the tuned frequency.
       </p>
 
       <h3>Device</h3>
@@ -61,8 +61,8 @@
       </p>
       <label class="row"><span>The phone steers your character</span><input id="setSync" type="checkbox" /></label>
       <p class="note">
-        In VIEW, with the phone in your hand: turn or tilt it and your character looks the same way. Not while
-        it lies flat or stands still.
+        In VIEW, turning the phone turns your character left/right. After about 4 seconds completely still,
+        steering rests; move or pick the phone up and it activates again.
       </p>
       <label class="row"><span>Auto pickup</span><input id="setAutoPickup" type="checkbox" /></label>
       <p class="note">Picking the phone up, from the table or a stand, switches to VIEW; laying it flat to AV OUT.</p>
