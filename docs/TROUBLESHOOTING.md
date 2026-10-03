@@ -97,10 +97,12 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 
 ### No story videos, only a drawn picture
 
-The videos aren't converted yet: run `Convert Game Videos.bat`. It needs RAD Video Tools, FFmpeg and vgmstream
-in `TownfallCompanion\tools\` and names any that are missing, with where to get them (FFmpeg can also be
-installed with `winget install Gyan.FFmpeg.Essentials`). A video that **FAILED**: run it again, it retries
-only what's missing; if every video fails, unpack a fresh copy of `RADTools.7z`. Without the videos everything
+You do **not** need to run `Convert Game Videos.bat` first. The companion converts a video automatically
+when the phone first needs it, then caches it. Check the companion window: if automatic conversion says a
+tool is missing, put RAD Video Tools, FFmpeg and vgmstream in `TownfallCompanion\tools\` (FFmpeg can also
+be installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional
+pre-cache step if you want every clip ready in advance so its first play has no conversion delay. If a video
+reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips. Without the videos everything
 else works.
 
 ## UE4SS and the game
