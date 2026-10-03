@@ -1,5 +1,7 @@
 # Townfall Companion
 
+![Townfall Companion](docs/images/banner.jpg)
+
 Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfall**: it shows what the CRTV
 shows and plays its sound and the signals' voices, and it can tune it and turn your character as if you were
 holding it. The phone needs no app, only its browser.
@@ -24,6 +26,12 @@ holding it. The phone needs no app, only its browser.
   AV OUT when it is laid flat; set on a stand, it stays in VIEW or goes to AV OUT, as chosen.
 - **Pause:** in the game's pause menu, everything on the phone holds too.
 - Vibration for the buttons and nearby signals, and settings for every part of it.
+
+## Screenshots
+
+| Settings | CRTV video | Monster scanner |
+| --- | --- | --- |
+| ![Townfall Companion settings](docs/images/settings.jpg) | ![CRTV video on the phone](docs/images/crtv-blue.jpg) | ![Monster scanner on the phone](docs/images/crtv-red.jpg) |
 
 ## The game's sound and videos
 
