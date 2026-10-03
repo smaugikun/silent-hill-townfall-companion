@@ -43,7 +43,7 @@ export const pickup = {
   tilt: null,     // degrees from lying flat, once the sensor has read
   turning: null,  // how fast it turns (degrees a second), once the gyroscope has read
   onStand: false, // raised and settled very still
-  standAvOut: loadFlag("tfc.standAvOut", false), // Auto pickup: set on a stand, it goes to AV OUT
+  standAvOut: loadFlag("tfc.standAvOut", true), // Auto pickup: set on a stand, it goes to AV OUT
 };
 
 const listeners = [];

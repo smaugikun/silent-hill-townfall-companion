@@ -26,7 +26,7 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
   again and it activates automatically. Phone tilt still changes the scanner view, but does not take over
   Townfall's vertical game camera.
 - **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
-  AV OUT when it is laid flat; set on a stand, it stays in VIEW or goes to AV OUT, as chosen.
+  AV OUT when it is laid flat; set on a stand, it goes to AV OUT (or stays in VIEW, as chosen).
 - **Pause:** in the game's pause menu, everything on the phone holds too.
 - Vibration for the buttons and nearby signals, and settings for every part of it.
 
