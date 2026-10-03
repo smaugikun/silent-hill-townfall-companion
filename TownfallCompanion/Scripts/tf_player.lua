@@ -50,18 +50,14 @@ function M.pitch()
     return pitch and ((pitch + 180) % 360 - 180) or 0
 end
 
--- Turns the player by `degrees` (clockwise). Vertical phone movement is sent through Townfall's normal
--- look input path instead of forcing ControlRotation.Pitch: the game's camera layer can override a directly
--- assigned pitch, while AddControllerPitchInput is the same Unreal path used for local look-up/down input.
-function M.turn(degrees, up)
+-- Turns the player by `degrees` (clockwise). Steering deliberately controls yaw only; forcing vertical
+-- camera input fights Townfall's own camera behaviour and feels like a free camera.
+function M.turn(degrees)
     local rotation = controller:GetControlRotation()
     local yaw = rotation.Yaw + degrees
     controller:SetControlRotation({ Pitch = common.tryNumber(function() return rotation.Pitch end) or 0,
                                     Yaw = yaw,
                                     Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
-    if up and up ~= 0 then
-        pawn:AddControllerPitchInput(up)
-    end
     local now = controller:GetControlRotation().Yaw
     if angleDelta(now, yaw) > 1 then
         logChange("turn check", "TF-PLAYER", string.format("turn by %.1f didn't take: yaw %.1f, wanted %.1f",
