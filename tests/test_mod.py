@@ -30,14 +30,25 @@ class ModTest(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.telemetry_file = Path(tmp.name) / "townfall-companion-telemetry.json"
         self.commands_file = Path(tmp.name) / "townfall-companion-commands.json"
+        self.tmp = Path(tmp.name)
+        self.bridge_beat = self.tmp / "townfall-companion-bridge.json"
+        if not self.options.get("noBridge"):  # the companion is running, with a phone on the page
+            self.beat(phones=self.options.get("phones", 1))
         lua = lua54.LuaRuntime()
         make_world = lua.execute(FAKE_UE4SS.read_text(encoding="utf-8"))
         self.world = make_world(SCRIPTS.as_posix(), tmp.name, lua.table(**self.options))
         self.addCleanup(self.world.closeFiles)  # the mod keeps command files open; runs before tmp.cleanup
         self.world.start()
 
+    def beat(self, phones=1, age=0):
+        """The companion's heartbeat file, as the companion writes it."""
+        self.bridge_beat.write_text(json.dumps({"time": int(time.time()) - age, "pid": 1, "port": 8790, "phones": phones}))
+
     def logs(self):
         return list(self.world.logs.values())
+
+    def executed(self):
+        return list(self.world.executed.values())
 
     def logged(self, text):
         return sum(text in line for line in self.logs())
@@ -1032,6 +1043,104 @@ class NoTempDirTest(ModTest):
         self.assertEqual(self.logged("telemetry disabled"), 1)
         self.assertEqual(self.logged("tracking local pawn"), 1)
         self.assertFalse(self.telemetry_file.exists())
+
+
+class PresenceTest(ModTest):
+    """The game and the companion know about each other through two small files in the temp folder."""
+
+    def test_the_game_says_it_is_running(self):
+        self.world.tick(2)
+        beat = json.loads((self.tmp / "townfall-companion-game.json").read_text(encoding="utf-8"))
+        self.assertLess(abs(time.time() - beat["time"]), 3)
+
+    def test_nothing_is_read_while_no_phone_has_the_page_open(self):
+        self.beat(phones=0)
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(3)
+        self.assertFalse(self.telemetry_file.exists())
+        self.beat(phones=1)  # a phone opens the page
+        self.world.tick(2)
+        self.assertTrue(self.telemetry_file.exists())
+        self.beat(phones=0)  # and closes it: the file is left as it is
+        written = self.world.telemetryWrites
+        self.world.tick(3)
+        self.assertEqual(self.world.telemetryWrites, written)
+
+    def test_nothing_is_read_once_the_companion_has_gone(self):
+        self.beat(age=60)  # its heartbeat stopped a minute ago
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(3)
+        self.assertFalse(self.telemetry_file.exists())
+
+    def test_an_unchanged_state_is_not_rewritten_at_every_sample(self):
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(1)
+        written = self.world.telemetryWrites
+        self.world.tick(10)  # ten samples a moment apart, nothing moving
+        self.assertLessEqual(self.world.telemetryWrites - written, 1)
+        before = self.telemetry()["player"]
+        self.world.movePlayer(UE_X + 500, UE_Y, UE_Z)
+        self.world.tick(1)
+        self.assertNotEqual(self.telemetry()["player"], before)  # a change reaches the file at once
+
+    def test_the_file_is_still_rewritten_often_enough_to_look_alive(self):
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        before = []
+        for _ in range(4):
+            self.world.tick(1)  # a second of game time each
+            before.append(self.telemetry()["t"])
+        self.assertEqual(len(set(before)), 4)  # the companion calls a file older than 2 s the game having left
+
+
+class AutostartTest(ModTest):
+    options = {"noBridge": True}
+
+    def test_the_companion_is_started_once_when_none_runs(self):
+        for _ in range(3):
+            self.world.tick(1)
+        self.assertEqual(self.executed(), [])  # one started by hand just before the game may still show up
+        for _ in range(8):
+            self.world.tick(1)
+        commands = self.executed()
+        self.assertEqual(len(commands), 1)
+        self.assertIn('start "Townfall Companion" /min', commands[0])
+        self.assertIn('Start Companion.bat" --with-game', commands[0])
+        for _ in range(30):
+            self.world.tick(1)
+        self.assertEqual(len(self.executed()), 1)
+        self.assertEqual(self.logged("no companion running: starting it"), 1)
+
+    def test_not_when_one_shows_up_in_the_first_seconds(self):
+        for _ in range(3):
+            self.world.tick(1)
+        self.beat()
+        for _ in range(20):
+            self.world.tick(1)
+        self.assertEqual(self.executed(), [])
+
+    def test_not_again_after_it_was_closed(self):
+        self.beat()
+        for _ in range(12):
+            self.world.tick(1)
+        self.beat(age=60)  # the window was closed
+        for _ in range(30):
+            self.world.tick(1)
+        self.assertEqual(self.executed(), [])
+
+    def test_not_when_the_settings_say_autostart_0(self):
+        import shutil
+        mod = self.tmp / "TownfallCompanion"
+        shutil.copytree(SCRIPTS, mod / "Scripts")
+        (mod / "companion.ini").write_text("[bridge]\nport = 8790\n; the game starts it:\nautostart = 0 ; mine\n", encoding="utf-8")
+        lua = lua54.LuaRuntime()
+        world = lua.execute(FAKE_UE4SS.read_text(encoding="utf-8"))((mod / "Scripts").as_posix(), str(self.tmp),
+                                                                     lua.table(noBridge=True))
+        world.start()
+        for _ in range(15):
+            world.tick(1)
+        self.assertEqual(len(world.executed), 0)
+        self.assertTrue(any("autostart is off" in line for line in world.logs.values()))
+        world.closeFiles()
 
 
 if __name__ == "__main__":

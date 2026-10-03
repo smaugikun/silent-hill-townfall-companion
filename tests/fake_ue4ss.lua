@@ -19,7 +19,9 @@ return function(scriptsDir, tempDir, options)
     os.getenv = function(k) if k == "TEMP" and not options.noTemp then return tempDir end end
     -- The mod keeps the command files open (tf_commands.lua); tests close them before removing the folder.
     local opened, realOpen = {}, io.open
+    world.telemetryWrites = 0 -- how often the telemetry file was opened for writing
     io.open = function(path, mode)
+        if mode == "w" and path:find("telemetry.json", 1, true) then world.telemetryWrites = world.telemetryWrites + 1 end
         local f, err = realOpen(path, mode)
         if f and mode == "r" then opened[#opened + 1] = f end
         return f, err
@@ -184,6 +186,10 @@ return function(scriptsDir, tempDir, options)
     function world.dropControlPitch() controller.pitch = nil end
     -- The game holds the camera: SetControlRotation has no effect.
     function world.lockCamera() controller.locked = true end
+
+    -- What the mod ran with os.execute (starting the companion): recorded, not run.
+    world.executed = {}
+    os.execute = function(command) world.executed[#world.executed + 1] = command; return true end
 
     function world.start() dofile(scriptsDir .. "/main.lua") end
 
