@@ -6,7 +6,7 @@ to SOURCES and to the mod's path patterns (CRTV_VIDEO in tf_common.lua, tf_cutsc
 
 The game's videos are Bink 2, and the only decoder that gets them right is RAD's own (FFmpeg with the
 open Bink 2 patch repeats every third frame): RAD Video Tools' radvideo64.exe decodes each into a
-temporary uncompressed AVI, and FFmpeg encodes that to H.264. A video without sound of its own gets the
+MP4 directly, and FFmpeg only remuxes it for browser playback / adds an external soundtrack when needed. A video without sound of its own gets the
 soundtrack the game plays alongside it, from BinkAudio.bank (vgmstream). The game's own MP4s are copied.
 Everything goes to TownfallCompanion\\cache\\clips, which the bridge serves at /clips/: made from the
 user's own game, never shipped.
@@ -67,41 +67,48 @@ def has_sound(ffmpeg, video):
     return " Audio: " in probe.stderr
 
 
-def decode_bink(radvideo, bk2, avi):
-    # binkconv: /o overwrites, /# closes the tool when done instead of waiting for its Done button. Its
-    # window opens minimized and doesn't take the focus.
+def decode_bink(radvideo, bk2, mp4):
+    # RAD's converter can write MP4 directly. /o overwrites; /# closes the tool when done instead of
+    # waiting for its Done button. Its window opens minimized and doesn't take the focus.
     startup = None
     if hasattr(subprocess, "STARTUPINFO"):
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE
-    result = subprocess.run([str(radvideo), "binkconv", str(bk2), str(avi), "/o", "/#"], startupinfo=startup)
-    if result.returncode or not avi.is_file():
-        raise Failed(f"radvideo64.exe couldn't decode it (exit code {result.returncode})")
+    result = subprocess.run([str(radvideo), "binkconv", str(bk2), str(mp4), "/o", "/#"], startupinfo=startup)
+    if result.returncode or not mp4.is_file():
+        raise Failed(f"radvideo64.exe couldn't convert it (exit code {result.returncode})")
 
 
-def convert(source, mp4, tools, soundtracks, bank, preset="medium"):
-    """Makes mp4 from the game's video, with the soundtrack the game plays alongside it if it has none."""
+def convert(source, mp4, tools, soundtracks, bank, preset=None):
+    """Makes MP4 from the game's video without an uncompressed intermediate.
+
+    Bink 2 goes straight through RAD to MP4. FFmpeg then only remuxes MP4 -> MP4 (video copied, not
+    re-encoded) so the file is browser-friendly with +faststart, and adds the game's external soundtrack
+    when the Bink itself is silent. The game's own MP4s take the same remux path only when necessary.
+    """
     mp4.parent.mkdir(parents=True, exist_ok=True)
     part = mp4.with_name(mp4.stem + ".part.mp4")
     try:
         with tempfile.TemporaryDirectory(prefix="townfall-companion-") as tmp:
             video, bink = source, source.suffix.lower() == ".bk2"
             if bink:
-                video = Path(tmp) / "video.avi"  # uncompressed, ~27 MB per second of video
+                video = Path(tmp) / "video.mp4"
                 decode_bink(tools["radvideo"], source, video)
+
             sound = None
             if source.stem in soundtracks and not has_sound(tools["ffmpeg"], video):
                 sound = Path(tmp) / "sound.wav"
                 if not decode_stream(tools["vgmstream"], bank, soundtracks[source.stem], sound):
                     raise Failed("vgmstream couldn't decode its soundtrack")
+
             if not bink and not sound:
                 shutil.copyfile(source, part)
             else:
-                encode = ["-c:v", "libx264", "-preset", preset, "-crf", "23", "-pix_fmt", "yuv420p"] if bink else ["-c:v", "copy"]
                 run([tools["ffmpeg"], "-hide_banner", "-loglevel", "error", "-y", "-i", video,
-                     *(["-i", sound, "-map", "0:v", "-map", "1:a"] if sound else ["-map", "0:v", "-map", "0:a?"]),
-                     *encode, "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", part])
+                     *(["-i", sound, "-map", "0:v", "-map", "1:a"] if sound else
+                       ["-map", "0:v", "-map", "0:a?"]),
+                     "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", part])
         part.replace(mp4)
     finally:
         part.unlink(missing_ok=True)
@@ -179,9 +186,8 @@ class GameVideos:
                 return out
             print(f"Game video: converting {key} the first time it is needed ...", flush=True)
             try:
-                # First-use latency matters more than cache size. The manual batch converter keeps its
-                # medium preset; the bridge uses veryfast, at the same CRF, for a quicker first picture.
-                convert(source, out, self.tools, self._soundtrack_map(), self.bank, preset="veryfast")
+                # RAD writes MP4 directly; FFmpeg only remuxes/copies that MP4 and optionally adds audio.
+                convert(source, out, self.tools, self._soundtrack_map(), self.bank)
             except Failed as exc:
                 self.problem = f"{key}: {exc}"
                 print(f"Game video unavailable: {self.problem}", flush=True)
