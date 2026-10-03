@@ -6,12 +6,15 @@ to SOURCES and to the mod's path patterns (CRTV_VIDEO in tf_common.lua, tf_cutsc
 
 The game's videos are Bink 2, and the only decoder that gets them right is RAD's own (FFmpeg with the
 open Bink 2 patch repeats every third frame): RAD Video Tools' radvideo64.exe decodes each into a
-MP4 directly, then FFmpeg makes a small phone copy (maximum 640x480, H.264) and adds an external soundtrack when needed. A video without sound of its own gets the
+temporary AVI, then FFmpeg makes a small phone copy (maximum 640x480, H.264) and adds an external soundtrack when needed. The AVI is deleted automatically. A video without sound of its own gets the
 soundtrack the game plays alongside it, from BinkAudio.bank (vgmstream). The game's own MP4s are copied.
 Everything goes to TownfallCompanion\\cache\\clips, which the bridge serves at /clips/: made from the
 user's own game, never shipped.
 """
 import argparse
+import atexit
+import ctypes
+import os
 import shutil
 import subprocess
 import tempfile
@@ -54,8 +57,139 @@ def videos(movies):
                 yield file, target / file.relative_to(root).with_suffix(".mp4")
 
 
+class _ChildProcesses:
+    """Runs converter tools headlessly and ties them to this Python process.
+
+    On Windows each active child is put in a Job Object with KILL_ON_JOB_CLOSE. If the companion window
+    closes or Python exits, Windows closes the job handle and kills RAD/FFmpeg too. A normal shutdown also
+    stops them explicitly. On other platforms the same wrapper still hides/captures output where possible.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._active = {}
+        self._closed = False
+
+    @staticmethod
+    def _windows_job(process):
+        if os.name != "nt":
+            return None
+        from ctypes import wintypes
+
+        class BasicLimit(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class ExtendedLimit(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimit),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = ExtendedLimit()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
+        ok = ok and kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(process._handle))
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+        return job
+
+    @staticmethod
+    def _close_job(job):
+        if job and os.name == "nt":
+            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(job)
+
+    def run(self, args, capture_output=False, text=False, errors=None):
+        with self._lock:
+            if self._closed:
+                raise Failed("conversion stopped because the companion is closing")
+
+        startup, flags = None, 0
+        if os.name == "nt":
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = 0  # SW_HIDE: RAD/FFmpeg stay fully in the background
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        process = subprocess.Popen(
+            [str(a) for a in args],
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            text=text,
+            errors=errors,
+            startupinfo=startup,
+            creationflags=flags,
+        )
+        job = self._windows_job(process)
+        with self._lock:
+            if self._closed:
+                if job:
+                    self._close_job(job)
+                elif process.poll() is None:
+                    process.terminate()
+                raise Failed("conversion stopped because the companion is closing")
+            self._active[process.pid] = (process, job)
+
+        try:
+            stdout, stderr = process.communicate()
+            return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+        finally:
+            with self._lock:
+                self._active.pop(process.pid, None)
+            self._close_job(job)
+
+    def close(self):
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            active = list(self._active.values())
+            self._active.clear()
+        for process, job in active:
+            if job:
+                self._close_job(job)  # closing a KILL_ON_JOB_CLOSE job kills the child
+            elif process.poll() is None:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+
+
+_children = _ChildProcesses()
+atexit.register(_children.close)
+
+
 def run(args):
-    result = subprocess.run([str(a) for a in args], capture_output=True, text=True, errors="replace")
+    result = _children.run(args, capture_output=True, text=True, errors="replace")
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise Failed(f"{Path(args[0]).name} failed (exit code {result.returncode}){': ' + detail[-1] if detail else ''}")
@@ -63,32 +197,24 @@ def run(args):
 
 def has_sound(ffmpeg, video):
     # Without an output FFmpeg only describes its input (and exits with an error).
-    probe = subprocess.run([str(ffmpeg), "-hide_banner", "-i", str(video)], capture_output=True, text=True, errors="replace")
-    return " Audio: " in probe.stderr
+    probe = _children.run([ffmpeg, "-hide_banner", "-i", video], capture_output=True, text=True, errors="replace")
+    return " Audio: " in (probe.stderr or "")
 
 
-def decode_bink(radvideo, bk2, mp4):
-    # RAD's converter can write MP4 directly. /o overwrites; /# closes the tool when done instead of
-    # waiting for its Done button. Its window opens minimized and doesn't take the focus.
-    startup = None
-    if hasattr(subprocess, "STARTUPINFO"):
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 0  # SW_HIDE
-    result = subprocess.run([str(radvideo), "binkconv", str(bk2), str(mp4), "/o", "/#"], startupinfo=startup)
-    # Some Townfall Binks make RAD return 8006/show an error even though it has already written a usable MP4.
-    # Treat the file as authoritative: FFmpeg immediately reads it next and will give us a real failure if
-    # the output is incomplete/corrupt. Only RAD producing no output at all is a conversion failure.
-    if not mp4.is_file() or mp4.stat().st_size == 0:
-        raise Failed(f"radvideo64.exe produced no output (exit code {result.returncode})")
+def decode_bink(radvideo, bk2, avi):
+    # Keep the proven converter path from main: Bink -> temporary AVI. Direct Bink -> MP4 makes RAD return
+    # 8006 for Townfall clips. The child is hidden and tied to the companion process by _ChildProcesses.
+    result = _children.run([radvideo, "binkconv", bk2, avi, "/o", "/#"])
+    if result.returncode or not Path(avi).is_file():
+        raise Failed(f"radvideo64.exe couldn't decode it (exit code {result.returncode})")
 
 
 def convert(source, mp4, tools, soundtracks, bank, preset=None):
-    """Makes a small browser MP4 from the game's video without an uncompressed intermediate.
+    """Makes a small browser MP4 from the game's video.
 
-    Bink 2 goes straight through RAD to a temporary MP4. FFmpeg then makes the phone copy: at most
-    640x480 while preserving aspect ratio, H.264 CRF 28 / veryfast / yuv420p, AAC 96k, +faststart.
-    The game's own MP4s are still copied unchanged when they need no separate soundtrack.
+    Bink 2 uses RAD's reliable Bink-to-AVI conversion internally. FFmpeg immediately turns that temporary
+    AVI into the phone copy: at most 640x480 while preserving aspect ratio, H.264 CRF 28 / veryfast /
+    yuv420p, AAC 96k, +faststart. The AVI disappears with the temporary directory afterward.
     """
     mp4.parent.mkdir(parents=True, exist_ok=True)
     part = mp4.with_name(mp4.stem + ".part.mp4")
@@ -96,7 +222,7 @@ def convert(source, mp4, tools, soundtracks, bank, preset=None):
         with tempfile.TemporaryDirectory(prefix="townfall-companion-") as tmp:
             video, bink = source, source.suffix.lower() == ".bk2"
             if bink:
-                video = Path(tmp) / "video.mp4"
+                video = Path(tmp) / "video.avi"
                 decode_bink(tools["radvideo"], source, video)
 
             sound = None
@@ -147,6 +273,7 @@ class GameVideos:
         self._precache_started = False
         self._precache_lock = threading.Lock()
         self._conversion_lock = threading.Lock()
+        self._stopping = threading.Event()
 
         if not self.game_dir:
             self.problem = config.NO_GAME
@@ -196,6 +323,9 @@ class GameVideos:
     def _precache(self, keys):
         ready = 0
         for number, key in enumerate(keys, 1):
+            if self._stopping.is_set():
+                print("Game videos: pre-cache stopped; missing clips will continue next time.", flush=True)
+                return
             if self.mp4(key, background=True):
                 ready += 1
             print(f"Game videos: pre-cache {number}/{len(keys)} ({ready} ready)", flush=True)
@@ -203,6 +333,8 @@ class GameVideos:
 
     def mp4(self, relative, background=False):
         """Cached/converted MP4 for a /clips/ relative path, or None when it cannot be provided."""
+        if self._stopping.is_set():
+            return None
         relative = Path(str(relative).replace("\\", "/"))
         if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() != ".mp4":
             return None
@@ -232,7 +364,7 @@ class GameVideos:
                 with self._conversion_lock:
                     if out.is_file():
                         return out
-                    # RAD writes MP4 directly; FFmpeg makes the small 640x480-max phone copy and adds audio.
+                    # RAD makes a temporary AVI; FFmpeg makes the small 640x480-max phone MP4 and adds audio.
                     convert(source, out, self.tools, self._soundtrack_map(), self.bank)
             except Failed as exc:
                 self.problem = f"{key}: {exc}"
@@ -240,6 +372,11 @@ class GameVideos:
                 return None
             print(f"Game video ready: {key} ({out.stat().st_size // 1024:,} KB, cached)", flush=True)
         return out
+
+    def close(self):
+        """Stop background conversion. Finished cache files stay; missing/interrupted clips resume next run."""
+        self._stopping.set()
+        _children.close()
 
     def _lock(self, path):
         with self._locks_lock:
