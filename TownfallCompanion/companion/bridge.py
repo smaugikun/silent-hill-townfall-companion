@@ -601,6 +601,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        Handler.videos.close()
         server.server_close()
 
 
