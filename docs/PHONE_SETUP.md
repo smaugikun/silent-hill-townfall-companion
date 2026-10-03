@@ -51,7 +51,7 @@ The flag applies only to the address you enter, and only in Chrome on that phone
 | | Without the flag | With the flag |
 |---|---|---|
 | Screen, picture, sound, voices, videos | ✓ | ✓ |
-| TUNING buttons, F key, AV OUT / VIEW switch, settings | ✓ | ✓ |
+| TUNING buttons, F key (save / confirm frequency), AV OUT / VIEW switch, settings | ✓ | ✓ |
 | Vibration | ✓ | ✓ |
 | Turning the phone to aim the scanner / turn the player | ✗ | ✓ |
 | Auto pickup, and the phone noticing it is put down | ✗ | ✓ |
