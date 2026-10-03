@@ -46,16 +46,17 @@ under the ISC License (copyright its many authors, see its COPYING file).
 
 ## Optional, not included
 
-Used only by `Convert Game Videos.bat`, to convert the game's videos on the user's PC.
+Used by the companion to convert the game's videos automatically on the user's PC, and by the optional
+`Convert Game Videos.bat` pre-cache step.
 
 ### RAD Video Tools
 
-Decodes the game's Bink 2 videos. By RAD Game Tools, © Epic Games, Inc.:
+Converts the game's Bink 2 videos to MP4. By RAD Game Tools, © Epic Games, Inc.:
 https://www.radgametools.com/bnkdown.htm. Downloaded by the user from RAD's site under RAD's terms.
 
 ### FFmpeg
 
-Encodes the decoded videos for the phone. By the FFmpeg developers, https://ffmpeg.org. Builds such as
+Compresses/remuxes the converted videos for phone playback and adds separate game audio when needed. By the FFmpeg developers, https://ffmpeg.org. Builds such as
 https://www.gyan.dev/ffmpeg/builds/ are under the GPL v3. Downloaded or installed by the user.
 
 ## The game
