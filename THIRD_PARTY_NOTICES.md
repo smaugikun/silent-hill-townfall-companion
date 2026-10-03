@@ -26,7 +26,8 @@ Neither covers the game's monster designs.
 
 ## Required, not included
 
-Each of these is installed by the user from its own source; none of their files are in this mod.
+Each of these is installed by the user from its own source; none of their files are in this mod. The folders in
+`TownfallCompanion/tools/` hold only a note each (`PUT FILES HERE.txt`) saying which program goes where.
 
 ### UE4SS
 

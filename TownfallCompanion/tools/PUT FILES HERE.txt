@@ -1,0 +1,22 @@
+TOWNFALL COMPANION - TOOLS
+==========================
+
+Townfall Companion uses three free programs that are not part of this mod. Download each one
+and put it in its own folder here:
+
+  vgmstream\   puts the game's sounds on the phone
+               put here:  vgmstream-cli.exe  and the .dll files that come with it
+
+  rad\         reads the game's videos (Bink 2)
+               put here:  radvideo64.exe  (unpack all of RADTools.7z)
+
+  ffmpeg\      makes those videos small enough for the phone
+               put here:  ffmpeg.exe
+
+Open each folder: its "PUT FILES HERE.txt" says where to download the program.
+
+The companion finds the programs by itself, anywhere below this folder (or on the PATH), so
+there is nothing to set up. When it starts, its window names anything it can't find.
+Without vgmstream the phone is silent. Without rad and ffmpeg the phone shows no game videos.
+
+What you put here stays when you update the mod.

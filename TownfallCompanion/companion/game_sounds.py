@@ -78,8 +78,8 @@ class GameSounds:
     def _build_index(self):
         try:
             if not (self.vgmstream and self.vgmstream.is_file()):
-                self.problem = (f"missing {config.missing_tool('vgmstream', self.vgmstream)}. Unpack it into the "
-                                "TownfallCompanion\\tools folder and start again, or set vgmstream in companion.ini.")
+                self.problem = (f"missing {config.missing_tool('vgmstream', self.vgmstream)}. Unpack it into "
+                                "TownfallCompanion\\tools\\vgmstream and start again, or set vgmstream in companion.ini.")
             elif not self.banks_dir:
                 self.problem = config.NO_GAME
             elif not self.banks_dir.is_dir():

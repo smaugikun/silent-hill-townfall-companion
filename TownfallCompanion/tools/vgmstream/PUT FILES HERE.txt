@@ -1,0 +1,13 @@
+VGMSTREAM - the game's sounds
+
+Put here:   vgmstream-cli.exe
+            and the .dll files that come with it. Keep them together in this folder:
+            vgmstream-cli.exe needs its .dll files next to it.
+            Easiest: unzip the whole vgmstream-win64.zip into this folder.
+
+Download:   https://vgmstream.org  (the "vgmstream-win64.zip" build; tested with r2117)
+
+When it is right, this file exists:
+            TownfallCompanion\tools\vgmstream\vgmstream-cli.exe
+
+Without it the phone has no sound.

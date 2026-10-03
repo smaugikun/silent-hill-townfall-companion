@@ -40,7 +40,8 @@ changing:
 - `game`: the folder that contains `Townfall\Content`, e.g. `game = D:\SteamLibrary\steamapps\common\Townfall`.
   Only needed when the window says **"Townfall not found"**, **"the game's sound banks not found"** or
   **"The game's videos aren't in …"**.
-- `vgmstream`, `ffmpeg`, `radvideo`: a tool's full path, if it isn't in `tools\` or on the PATH.
+- `vgmstream`, `ffmpeg`, `radvideo`: a tool's full path, if it isn't in its folder under `tools\` (`vgmstream\`,
+  `ffmpeg\`, `rad\`; each has a `PUT FILES HERE.txt`) or on the PATH.
 
 If the window complains about `companion.ini` itself, fix that line, or delete the file: the next start writes
 it again with the defaults.
@@ -82,8 +83,8 @@ battery saver. iPhones can't vibrate from a web page.
 - Tap the phone's screen once (browsers wait for a tap).
 - Settings: *In VIEW the phone plays the sound* on, and the volume up. In AV OUT the sound always plays on the PC.
 - The companion's window says **"Game sounds unavailable, the phone will be silent"** and why: usually
-  **vgmstream** is missing. Unpack `vgmstream-win64.zip` into `TownfallCompanion\tools\` and start the companion
-  again.
+  **vgmstream** is missing. Unpack `vgmstream-win64.zip` into `TownfallCompanion\tools\vgmstream\` and start the
+  companion again.
 
 ### The game still plays the CRTV sound too
 
@@ -114,9 +115,9 @@ is deleted. RAD and FFmpeg run in the background; closing the companion stops an
 the next start continues with whatever clips are still missing. Background conversion also runs at reduced
 CPU priority (and FFmpeg uses one encoding thread) so on-demand phone audio/dialogue stays responsive during play.
 
-If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
-`TownfallCompanion\tools\` (FFmpeg can also be installed with
-`winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
+If automatic conversion says a tool is missing, put RAD Video Tools in `TownfallCompanion\tools\rad\`, FFmpeg in
+`tools\ffmpeg\` and vgmstream in `tools\vgmstream\` (each folder has a `PUT FILES HERE.txt`; FFmpeg can also be
+installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
 shortcut if you want every clip ready before starting Townfall, so no conversion work runs during play.
 If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips.
 

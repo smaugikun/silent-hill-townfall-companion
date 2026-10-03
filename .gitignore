@@ -4,4 +4,7 @@ __pycache__/
 # Made on each PC, never committed or shipped: the settings, what is made from the game, downloaded tools.
 TownfallCompanion/companion.ini
 TownfallCompanion/cache/
-TownfallCompanion/tools/
+# The tools folder keeps only its notes (PUT FILES HERE.txt, saying what goes where); the programs stay out.
+TownfallCompanion/tools/**
+!TownfallCompanion/tools/**/
+!TownfallCompanion/tools/**/PUT FILES HERE.txt

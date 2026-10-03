@@ -43,8 +43,9 @@ def find_tools(settings):
         else:
             missing.append("  " + config.missing_tool(key, path))
     if missing:
-        raise SystemExit("Missing tools. Download each, unpack it anywhere into\n"
-                         f"  {config.TOOLS_DIR}\nand run this again (or set its path in companion.ini):\n" + "\n".join(missing))
+        raise SystemExit("Missing tools. Download each and put it in its folder (vgmstream, rad, ffmpeg) in\n"
+                         f"  {config.TOOLS_DIR}\n(the PUT FILES HERE.txt in each says what goes in), then run this again, "
+                         "or set its path in companion.ini:\n" + "\n".join(missing))
     return tools
 
 
