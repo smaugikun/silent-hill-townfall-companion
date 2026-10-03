@@ -18,6 +18,8 @@ if tool == "radvideo":
     if "BROKEN" in text:
         sys.exit(3)
     mp4.write_text("mp4 of " + text, encoding="utf-8")
+    if "WARNEXIT" in text:
+        sys.exit(7)  # RAD-style non-zero exit after successfully creating the output
 elif args == ["-hide_banner", "-i", args[-1]]:
     text = Path(args[-1]).read_text(encoding="utf-8", errors="replace")
     print("  Stream #0:0: Video: h264", file=sys.stderr)
