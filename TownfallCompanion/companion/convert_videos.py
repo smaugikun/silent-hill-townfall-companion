@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 import config
-from game_sounds import BANKS_IN_GAME, decode_stream, list_streams
+from game_sounds import BANKS_IN_GAME, list_streams
 
 MOVIES = config.GAME_CONTENT / "Movies"
 BINK_AUDIO = BANKS_IN_GAME / "BinkAudio.bank"
@@ -128,7 +128,7 @@ class _ChildProcesses:
         if job and os.name == "nt":
             ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(job)
 
-    def run(self, args, capture_output=False, text=False, errors=None):
+    def run(self, args, capture_output=False, text=False, errors=None, low_priority=False):
         with self._lock:
             if self._closed:
                 raise Failed("conversion stopped because the companion is closing")
@@ -139,6 +139,8 @@ class _ChildProcesses:
             startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startup.wShowWindow = 0  # SW_HIDE: RAD/FFmpeg stay fully in the background
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if low_priority:
+                flags |= getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
 
         process = subprocess.Popen(
             [str(a) for a in args],
@@ -188,28 +190,36 @@ _children = _ChildProcesses()
 atexit.register(_children.close)
 
 
-def run(args):
-    result = _children.run(args, capture_output=True, text=True, errors="replace")
+def run(args, low_priority=False):
+    result = _children.run(args, capture_output=True, text=True, errors="replace", low_priority=low_priority)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise Failed(f"{Path(args[0]).name} failed (exit code {result.returncode}){': ' + detail[-1] if detail else ''}")
 
 
-def has_sound(ffmpeg, video):
+def has_sound(ffmpeg, video, low_priority=False):
     # Without an output FFmpeg only describes its input (and exits with an error).
-    probe = _children.run([ffmpeg, "-hide_banner", "-i", video], capture_output=True, text=True, errors="replace")
+    probe = _children.run([ffmpeg, "-hide_banner", "-i", video], capture_output=True, text=True, errors="replace",
+                          low_priority=low_priority)
     return " Audio: " in (probe.stderr or "")
 
 
-def decode_bink(radvideo, bk2, avi):
+def decode_bink(radvideo, bk2, avi, low_priority=False):
     # Keep the proven converter path from main: Bink -> temporary AVI. Direct Bink -> MP4 makes RAD return
     # 8006 for Townfall clips. The child is hidden and tied to the companion process by _ChildProcesses.
-    result = _children.run([radvideo, "binkconv", bk2, avi, "/o", "/#"])
+    result = _children.run([radvideo, "binkconv", bk2, avi, "/o", "/#"], low_priority=low_priority)
     if result.returncode or not Path(avi).is_file():
         raise Failed(f"radvideo64.exe couldn't decode it (exit code {result.returncode})")
 
 
-def convert(source, mp4, tools, soundtracks, bank, preset=None):
+def decode_soundtrack(vgmstream, bank, number, out, low_priority=False):
+    """Decode one video soundtrack under the same child-process lifetime/priority rules as RAD/FFmpeg."""
+    result = _children.run([vgmstream, "-i", "-s", str(number), "-o", out, bank],
+                           capture_output=True, low_priority=low_priority)
+    return result.returncode == 0 and Path(out).is_file()
+
+
+def convert(source, mp4, tools, soundtracks, bank, preset=None, background=False):
     """Makes a small browser MP4 from the game's video.
 
     Bink 2 uses RAD's reliable Bink-to-AVI conversion internally. FFmpeg immediately turns that temporary
@@ -223,24 +233,27 @@ def convert(source, mp4, tools, soundtracks, bank, preset=None):
             video, bink = source, source.suffix.lower() == ".bk2"
             if bink:
                 video = Path(tmp) / "video.avi"
-                decode_bink(tools["radvideo"], source, video)
+                decode_bink(tools["radvideo"], source, video, low_priority=background)
 
             sound = None
-            if source.stem in soundtracks and not has_sound(tools["ffmpeg"], video):
+            if source.stem in soundtracks and not has_sound(tools["ffmpeg"], video, low_priority=background):
                 sound = Path(tmp) / "sound.wav"
-                if not decode_stream(tools["vgmstream"], bank, soundtracks[source.stem], sound):
+                if not decode_soundtrack(tools["vgmstream"], bank, soundtracks[source.stem], sound,
+                                         low_priority=background):
                     raise Failed("vgmstream couldn't decode its soundtrack")
 
             if not bink and not sound:
                 shutil.copyfile(source, part)
             else:
                 video_args = (["-vf", "scale=640:480:force_original_aspect_ratio=decrease:force_divisible_by=2",
-                               "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"]
+                               "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+                               *(["-threads", "1"] if background else [])]
                               if bink else ["-c:v", "copy"])
                 run([tools["ffmpeg"], "-hide_banner", "-loglevel", "error", "-y", "-i", video,
                      *(["-i", sound, "-map", "0:v", "-map", "1:a"] if sound else
                        ["-map", "0:v", "-map", "0:a?"]),
-                     *video_args, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", part])
+                     *video_args, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", part],
+                    low_priority=background)
         part.replace(mp4)
     finally:
         part.unlink(missing_ok=True)
@@ -365,7 +378,7 @@ class GameVideos:
                     if out.is_file():
                         return out
                     # RAD makes a temporary AVI; FFmpeg makes the small 640x480-max phone MP4 and adds audio.
-                    convert(source, out, self.tools, self._soundtrack_map(), self.bank)
+                    convert(source, out, self.tools, self._soundtrack_map(), self.bank, background=background)
             except Failed as exc:
                 self.problem = f"{key}: {exc}"
                 print(f"Game video unavailable: {self.problem}", flush=True)
