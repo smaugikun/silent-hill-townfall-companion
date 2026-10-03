@@ -114,7 +114,8 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
    [7-Zip](https://www.7-zip.org).
 6. Start the game: the mod starts the companion by itself about eight seconds after it loads, in a minimized
-   window you find in the taskbar (open it to see the phone's address and the PIN). The first time, you can also
+   window you find in the taskbar. The very first time, it opens a page in your PC's browser with the phone's address
+   and the PIN. Later, open `http://127.0.0.1:8790/info` on the PC (or the taskbar window) to see them again. You can also
    double-click **`Start Companion.bat`** in `TownfallCompanion` to see that it works before the game runs; it
    shows the same window and stays open until you close it (a companion started this way doesn't close with
    the game). Each time it starts it also switches off UE4SS's
@@ -131,7 +132,8 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
 2. Open **Chrome** (Android) or **Safari** (iPhone) and enter the address from the companion's window, with the
    port, e.g. `http://192.168.1.50:8790`. Bookmark it: it stays the same as long as the PC keeps its network
    address.
-3. Enter the **PIN** the companion's window shows (it is also `pin` in `companion.ini`); the phone remembers it.
+3. Enter the **PIN** (shown on that first page and at `http://127.0.0.1:8790/info` on the PC; it is also `pin` in
+   `companion.ini`); the phone remembers it. A browser on the PC itself never asks for it.
    Five wrong tries lock that phone out for a minute.
 4. Tap the screen once. Browsers play sound and vibrate only after a tap.
 5. *Android, recommended, once:* in Chrome, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
@@ -172,7 +174,7 @@ mod made too (the companion deletes its small files in the Windows temp folder w
   on the PATH? Look at `UE4SS.log` for `[TF-COMPANION] no companion running`. Start `Start Companion.bat` yourself to
   see its error.
 - **"Already running":** a companion is open already (check the taskbar); use that one, or close it first.
-- **PIN forgotten:** it is `pin` in `companion.ini`, or the companion's window.
+- **PIN forgotten:** open `http://127.0.0.1:8790/info` in a browser on the PC, or look at `pin` in `companion.ini`.
 - **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has
   `[TF-COMPANION] Townfall Companion loaded`.
 - **No sound:** tap the phone once, keep its screen on, and check the companion's window for "Game sounds

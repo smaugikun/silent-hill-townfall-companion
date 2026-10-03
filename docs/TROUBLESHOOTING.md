@@ -45,7 +45,8 @@ If it isn't there, wait ten seconds after closing one; it checks for a companion
 
 ### The phone asks for a PIN, or says "Wrong PIN"
 
-The PIN is `pin` in `TownfallCompanion\companion.ini` and is shown in the companion's window. Five wrong tries
+The PIN is shown at `http://127.0.0.1:8790/info` in a browser on the PC (with the phone's address), and is `pin` in
+`TownfallCompanion\companion.ini`. Five wrong tries
 lock that phone out for a minute. Set `pin =` empty to turn it off, or put another number of 4 to 12 digits;
 restart the companion for it to apply. A phone that has the old PIN is asked again.
 

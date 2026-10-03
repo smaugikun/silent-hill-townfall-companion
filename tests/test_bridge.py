@@ -72,7 +72,7 @@ class BridgeTest(unittest.TestCase):
              "--game-dir", str(root / "Townfall-install"), "--sound-cache", str(root / "sound-cache"),
              "--vgmstream", str(vgmstream if cls.vgmstream else root / "missing" / "vgmstream-cli.exe"),
              "--radvideo", str(radvideo), "--ffmpeg", str(ffmpeg),
-             "--settings", str(root / "companion.ini"), "--pin", "", *cls.extra_args],  # no PIN unless a test asks
+             "--settings", str(root / "companion.ini"), "--pin", "", "--no-browser", *cls.extra_args],  # no PIN unless a test asks
             # Not into a pipe: the bridge logs every request, and a pipe nobody reads fills up and blocks it.
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
@@ -412,7 +412,7 @@ class StartupTest(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, "-u", str(bridge), "--host", "127.0.0.1",
              "--telemetry-file", str(self.root / f"telemetry{len(self.bridges)}.json"),  # one each: they would see each other
-             "--sound-cache", str(self.root / "sounds"), "--pin", "", *args],
+             "--sound-cache", str(self.root / "sounds"), "--pin", "", "--no-browser", *args],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.bridges.append(process)
         lines = queue.Queue()
@@ -589,7 +589,7 @@ class ConfigTest(unittest.TestCase):
 
 
 class PinTest(BridgeTest):
-    extra_args = ("--pin", "123456")
+    extra_args = ("--pin", "123456", "--pin-also-here")  # here too: the tests can only reach it from this PC
 
     def login(self, pin):
         request = urllib.request.Request(self.url("/login"), data=json.dumps({"pin": pin}).encode(),
@@ -618,6 +618,17 @@ class PinTest(BridgeTest):
         self.assertEqual(self.get("/api/state", mine)[0], 200)
         self.assertNotIn(b'placeholder="PIN"', self.get("/", mine)[2])
         self.assertEqual(self.get("/api/state", {"Cookie": "tfc_pin=forged"})[0], 401)
+
+
+class LocalPinTest(BridgeTest):
+    extra_args = ("--pin", "123456")  # this PC needs no PIN, and its /info page says it
+
+    def test_this_pc_needs_no_pin_and_can_read_it_and_the_address(self):
+        self.assertEqual(self.get("/api/state")[0], 200)
+        status, _, body = self.get("/info")
+        self.assertEqual(status, 200)
+        self.assertIn(b"123456", body)
+        self.assertIn(b"Open this address", body)
 
 
 class PinLockoutTest(PinTest):
