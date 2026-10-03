@@ -21,6 +21,7 @@ const SETTLE_MS = 600;
 const GRAVITY_MS = 150; // gravity is the acceleration smoothed over about this long: a knock doesn't tilt it
 const TURNING_MS = 50;  // the turning speed, over about this long: short enough to show a still moment
 const STILL_DEG_S = 0.5;
+const WAKE_DEG_S = 1.0; // once resting, real motion wakes steering immediately
 const REST_MS = 4000; // four seconds truly still: then steering rests until the phone moves again
 const MOVED_DEG = 6;
 const STIR_MS = 2000;
@@ -60,6 +61,19 @@ function tellPutDown() {
   if (now === putDown) return;
   putDown = now;
   for (const fn of putDownListeners) fn(putDown);
+}
+
+export function wakeSteering() {
+  // Steering is driven by deviceorientation, while the rest detector normally uses devicemotion.
+  // Some Android devices throttle rotationRate after being still, so either sensor may wake it.
+  if (!pickup.resting) return false;
+  pickup.resting = false;
+  quietSince = null;
+  quietAt = performance.now();
+  restingGravity = null;
+  turnedSinceRest = [0, 0, 0];
+  tellPutDown();
+  return true;
 }
 
 let gravity = null, lastAt = 0;
@@ -143,6 +157,11 @@ function rest(rate, k, ms, now, acceleration) {
       turnedSinceRest = [0, 0, 0];
       tellPutDown();
     }
+    return;
+  }
+
+  if (pickup.turning >= WAKE_DEG_S) {
+    wakeSteering();
     return;
   }
 
