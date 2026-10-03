@@ -331,6 +331,8 @@ def watch_telemetry_file(path):
             live = game_file_live = now_live
             print(f"Game telemetry {'live' if live else 'stale'}: {path}")
             update_live()
+            if live:
+                Handler.videos.start_precache()
         if raw and raw != last_raw:
             try:
                 merge_telemetry(json.loads(raw))
@@ -577,7 +579,7 @@ def main():
         if missing:
             print("Game videos:  cached clips work; automatic conversion needs " + "; ".join(missing))
         else:
-            print(f"Game videos:  {len(Handler.videos.index)} found; each is converted automatically the first time it is needed")
+            print(f"Game videos:  {len(Handler.videos.index)} found; missing clips will pre-cache automatically when the game starts")
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
     threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()
     threading.Thread(target=report_sounds, args=(Handler.sounds,), daemon=True).start()
