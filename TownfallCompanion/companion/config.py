@@ -22,7 +22,7 @@ VERSION = "1.0.0"  # the release's version: the bridge says it at start, the rel
 
 MOD_DIR = Path(__file__).resolve().parents[1]
 SETTINGS_FILE = MOD_DIR / "companion.ini"
-CLIPS_DIR = MOD_DIR / "cache" / "clips"    # the game's videos, converted by convert_videos.py
+CLIPS_DIR = MOD_DIR / "cache" / "clips"    # the game's videos, converted automatically or by convert_videos.py
 SOUNDS_DIR = MOD_DIR / "cache" / "sounds"  # the game's sounds, decoded as the phone asks for them
 TOOLS_DIR = MOD_DIR / "tools"
 GAME_CONTENT = Path("Townfall", "Content")  # inside the install folder
@@ -54,9 +54,9 @@ listen = 0.0.0.0
 ; e.g. C:\Program Files (x86)\Steam\steamapps\common\Townfall
 game =
 ; The tools you download are looked for anywhere in the tools folder, then on the PATH.
-; vgmstream-cli.exe reads the game's sounds; the video converter needs it too.
+; vgmstream-cli.exe reads the game's sounds; automatic video conversion needs it too.
 vgmstream =
-; ffmpeg.exe and radvideo64.exe (RAD Video Tools): only the video converter uses them.
+; ffmpeg.exe and radvideo64.exe (RAD Video Tools): the companion converts videos with them as needed.
 ffmpeg =
 radvideo =
 """
