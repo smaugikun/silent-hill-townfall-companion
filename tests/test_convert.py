@@ -69,12 +69,12 @@ class ConvertTest(unittest.TestCase):
     def test_a_silent_bink_gets_the_soundtrack_the_game_plays_with_it(self):
         self.convert()
         self.assertEqual(self.made("Bink/Silent.mp4"),
-                         {"from": "avi of bink", "inputs": 2, "maps": ["0:v", "1:a"], "video": "libx264"})
+                         {"from": "mp4 of bink", "inputs": 2, "maps": ["0:v", "1:a"], "video": "copy"})
 
     def test_a_bink_with_its_own_sound_keeps_it(self):
         self.convert()
         self.assertEqual(self.made("Bink/Loud.mp4"),
-                         {"from": "avi of bink AUDIO", "inputs": 1, "maps": ["0:v", "0:a?"], "video": "libx264"})
+                         {"from": "mp4 of bink AUDIO", "inputs": 1, "maps": ["0:v", "0:a?"], "video": "copy"})
         self.assertNotIn("Loud", self.decoded())
 
     def test_the_games_mp4s(self):
@@ -98,7 +98,7 @@ class ConvertTest(unittest.TestCase):
         broken.write_text("BROKEN", encoding="utf-8")
         run = self.convert()
         self.assertEqual(run.returncode, 1)
-        self.assertIn("Bink/Broken.mp4 ... FAILED: radvideo64.exe couldn't decode it (exit code 3)", run.stdout)
+        self.assertIn("Bink/Broken.mp4 ... FAILED: radvideo64.exe couldn't convert it (exit code 3)", run.stdout)
         self.assertIn("4 of 5 videos ready for the phone.", run.stdout)
         self.assertIn("1 failed; run this again to retry them: Bink/Broken.mp4", run.stderr)
         self.assertEqual([p.name for p in self.out.rglob("*.part.mp4")], [])  # nothing half-made left
