@@ -32,10 +32,11 @@ game, on your PC, and streams them to the phone over your home network:
 - **Sound:** the CRTV's sounds, the signals' voices and the cutscenes' dialogue are decoded from the game's
   FMOD sound banks with vgmstream the first time the phone needs them, and kept in
   `TownfallCompanion\cache\sounds`.
-- **Videos** (optional): when the phone first needs one, the companion automatically converts that Bink video
-  directly to MP4 with RAD Video Tools; FFmpeg only remuxes it for browser playback and adds the game's separate soundtrack when needed and keeps it in `TownfallCompanion\cache\clips`.
-  The first play of a new clip can take a moment; after that it streams immediately from the cache.
-  `Convert Game Videos.bat` is still there only if you want to fill the cache in advance. Without the video
+- **Videos** (optional): no conversion step is required before playing. When the phone first needs a video,
+  the companion automatically converts it from the game's Bink file to a small phone MP4 and keeps it in
+  `TownfallCompanion\cache\clips`. The first play of a new clip can take a second; after that it loads from
+  the cache. **`Convert Game Videos.bat` is optional**: run it beforehand only if you want to pre-cache every
+  video so even their first play starts immediately. Without the video
   tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
   videos on screens in cutscenes don't appear on the phone; the videos' sound then plays on the PC.
 
@@ -70,8 +71,9 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
 4. Unpack **vgmstream** (`vgmstream-win64.zip`) into `TownfallCompanion\tools\`, e.g.
    `TownfallCompanion\tools\vgmstream\`.
 5. *Optional, for the videos:* unpack **RAD Video Tools** and **FFmpeg** into `TownfallCompanion\tools\` too.
-   Nothing needs converting by hand: the companion converts each game video the first time the phone needs it
-   and caches it. If you prefer to prepare every clip beforehand, **`Convert Game Videos.bat`** still does that.
+   That's all you need: videos convert automatically when first used. **Do not need to run
+   `Convert Game Videos.bat`**. You can run it anyway as an optional pre-cache step if you want every video
+   ready before playing, avoiding the short delay the first time each clip appears.
    `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
    [7-Zip](https://www.7-zip.org).
 6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. The first time, Windows asks whether Python
