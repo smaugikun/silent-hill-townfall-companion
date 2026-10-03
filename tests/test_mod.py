@@ -1044,6 +1044,11 @@ class NoTempDirTest(ModTest):
 class PresenceTest(ModTest):
     """The mod reads the game only while the companion's heartbeat says a phone has the page open."""
 
+    def test_the_game_says_it_is_running(self):
+        self.world.tick(2)
+        beat = json.loads((self.tmp / "townfall-companion-game.json").read_text(encoding="utf-8"))
+        self.assertLess(abs(time.time() - beat["time"]), 3)
+
     def test_nothing_is_read_while_no_phone_has_the_page_open(self):
         self.beat(phones=0)
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)

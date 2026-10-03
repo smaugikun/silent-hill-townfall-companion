@@ -683,13 +683,63 @@ class CleanupTest(unittest.TestCase):
             telemetry = folder / "townfall-companion-telemetry.json"
             names = ["townfall-companion-commands.json", "townfall-companion-steer.json",
                      "townfall-companion-confirm.json", "townfall-companion-audio.json",
-                     "townfall-companion-bridge.json", "townfall-companion-bridge.tmp"]
+                     "townfall-companion-bridge.json", "townfall-companion-game.json", "townfall-companion-bridge.tmp"]
             for path in [telemetry, *(folder / n for n in names)]:
                 path.write_text("{}")
             (folder / "somebody-elses.json").write_text("{}")
             bridge.remove_ipc_files(telemetry)
             self.assertEqual([p.name for p in folder.iterdir()], ["somebody-elses.json"])
             bridge.remove_ipc_files(telemetry)  # nothing left: no error
+
+
+class GameExitTest(unittest.TestCase):
+    def test_the_game_is_running_while_its_heartbeat_is_recent(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
+        with tempfile.TemporaryDirectory() as tmp:
+            beat = Path(tmp) / "game.json"
+            self.assertFalse(bridge.read_game_beat(beat, 60))
+            beat.write_text(json.dumps({"time": int(time.time())}))
+            self.assertTrue(bridge.read_game_beat(beat, 60))
+            beat.write_text(json.dumps({"time": int(time.time()) - 200}))
+            self.assertFalse(bridge.read_game_beat(beat, 60))
+
+    def start(self, folder):
+        return subprocess.Popen(
+            [sys.executable, "-u", str(BRIDGE), "--host", "127.0.0.1", "--port", str(free_port()),
+             "--telemetry-file", str(folder / "townfall-companion-telemetry.json"), "--settings", str(folder / "c.ini"),
+             "--sound-cache", str(folder / "sounds"), "--clips-dir", str(folder / "clips"), "--pin", "",
+             "--game-gone-after", "3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def test_the_companion_closes_when_a_game_it_has_seen_is_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            game = folder / "townfall-companion-game.json"
+            game.write_text(json.dumps({"time": int(time.time())}))  # the game runs
+            process = self.start(folder)
+            try:
+                time.sleep(2.5)
+                self.assertIsNone(process.poll())  # it keeps running while the game says so
+                game.write_text(json.dumps({"time": int(time.time()) - 100}))  # and stops saying so
+                self.assertEqual(process.wait(timeout=15), 0)  # a normal exit: the window closes
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            self.assertEqual([p.name for p in folder.glob("townfall-companion-*")], [])  # its files are gone too
+
+    def test_started_without_the_game_it_keeps_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process = self.start(Path(tmp))
+            try:
+                time.sleep(6)
+                self.assertIsNone(process.poll())
+            finally:
+                process.kill()
+                process.wait()
 
 
 if __name__ == "__main__":

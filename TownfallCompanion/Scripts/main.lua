@@ -4,8 +4,9 @@
 -- waypoints (tf_signals) and the cutscene playing (tf_cutscene), and writes them to
 -- %TEMP%\townfall-companion-telemetry.json for the companion's bridge (UE4SS Lua has no sockets).
 -- The phone's commands come back through files too (tf_commands); tf_audio quiets the game's CRTV
--- sound while the phone plays it. The companion writes a heartbeat file (how many phones have the page open):
--- the mod reads the game only while a phone is open, and idles otherwise.
+-- sound while the phone plays it. Two small heartbeat files tell the companion and the mod about each other:
+-- the companion's (how many phones have the page open: the mod reads the game only while one is, and idles
+-- otherwise) and the game's (every second: the companion closes a minute after it stops).
 
 local common = require("tf_common")
 local log, logChange, optional = common.log, common.logChange, common.optional
@@ -28,6 +29,7 @@ local AUDIO_MS = 250   -- silencing the game's CRTV sound again where it restart
 local tempDir = os.getenv("TEMP") or os.getenv("TMP")
 local telemetryPath = tempDir and (tempDir .. "\\townfall-companion-telemetry.json")
 local bridgeBeatPath = tempDir and (tempDir .. "\\townfall-companion-bridge.json")
+local gameBeatPath = tempDir and (tempDir .. "\\townfall-companion-game.json")
 if not telemetryPath then log("TF-COMPANION", "no TEMP directory, telemetry disabled") end
 commands.init(tempDir)
 
@@ -44,8 +46,14 @@ local function readBridge()
     return fresh, fresh and phones > 0
 end
 
--- Every second: whether a companion is running and a phone has its page open.
+-- Every second: says the game runs (the companion closes once it stops), and whether a companion is
+-- running and a phone has its page open.
 local function presence()
+    local f = gameBeatPath and io.open(gameBeatPath, "w")
+    if f then
+        f:write(string.format('{"time":%d}', os.time()))
+        f:close()
+    end
     bridgeUp, phoneHere = readBridge()
 end
 

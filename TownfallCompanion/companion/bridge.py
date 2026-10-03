@@ -31,11 +31,14 @@ PORT_TRIES = 20
 # Written ~10x/sec by the UE4SS mod (Scripts/main.lua).
 DEFAULT_TELEMETRY_FILE = Path(tempfile.gettempdir()) / "townfall-companion-telemetry.json"
 TELEMETRY_STALE_AFTER = 2.0
-# The companion also writes a small heartbeat file next to the telemetry: that it is here and how many phones
-# have the page open. The mod then reads the game only while a phone does.
+# The companion and the mod also talk through two small heartbeat files next to the telemetry: the companion's says
+# it is here and how many phones have the page open (the mod reads the game only while one does), the game's
+# says the game is running (the companion closes once it has stopped).
 HEARTBEAT_FILE = "townfall-companion-bridge.json"
+GAME_FILE = "townfall-companion-game.json"
 HEARTBEAT_EVERY = 1.0
 HEARTBEAT_FRESH_S = 4.0
+GAME_GONE_AFTER = 60.0  # a game that hasn't said it runs for this long has closed (a level load can stall it a while)
 MAX_BODY = 4096  # the phone's commands are tiny; more is not from the phone
 # Phone commands for the mod, next to the telemetry file: /api/control "type" -> file.
 COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-companion-steer.json",
@@ -107,7 +110,7 @@ def write_heartbeat(path, port):
 def ipc_files(telemetry_file):
     """Everything the companion and the mod leave in the temp folder."""
     folder = Path(telemetry_file).parent
-    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, HEARTBEAT_FILE.replace(".json", ".tmp")]
+    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE, HEARTBEAT_FILE.replace(".json", ".tmp")]
     return [Path(telemetry_file), *(folder / name for name in names)]
 
 
@@ -119,11 +122,27 @@ def remove_ipc_files(telemetry_file):
             pass
 
 
-def heartbeat_loop(telemetry_file, port):
-    """Says every second that the companion is here and how many phones have the page open."""
-    path = Path(telemetry_file).parent / HEARTBEAT_FILE
+def read_game_beat(path, within):
+    """Whether the game's heartbeat is no older than `within` seconds."""
+    try:
+        return time.time() - float(json.loads(Path(path).read_text(encoding="utf-8"))["time"]) <= within
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER):
+    """Says every second that the companion is here and how many phones have the page open, and closes it
+    once a game it has seen running has stopped saying so. Started without the game, it just keeps running."""
+    folder = Path(telemetry_file).parent
+    seen = False
     while True:
-        write_heartbeat(path, port)
+        write_heartbeat(folder / HEARTBEAT_FILE, port)
+        if read_game_beat(folder / GAME_FILE, gone_after):
+            seen = True
+        elif seen:
+            print("The game has closed: closing the companion.")
+            server.shutdown()
+            return
         time.sleep(HEARTBEAT_EVERY)
 
 
@@ -717,6 +736,7 @@ def main():
     parser.add_argument("--radvideo", type=Path, help="overrides RAD Video Tools in the settings")
     parser.add_argument("--ffmpeg", type=Path, help="overrides FFmpeg in the settings")
     parser.add_argument("--pin", help="overrides pin in the settings; empty turns the PIN off")
+    parser.add_argument("--game-gone-after", type=float, default=GAME_GONE_AFTER, help=argparse.SUPPRESS)  # tests
     parser.add_argument("--demo", action="store_true",
                         help="for development: a simulated game while the real one isn't sending; the real game wins")
     parser.add_argument("--telemetry-file", type=Path, default=DEFAULT_TELEMETRY_FILE,
@@ -774,7 +794,8 @@ def main():
         else:
             print(f"Game videos:  {len(Handler.videos.index)} found; missing clips start pre-caching now")
             Handler.videos.start_precache()
-    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port), daemon=True).start()
+    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.game_gone_after),
+                     daemon=True).start()
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
     threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()
     threading.Thread(target=report_sounds, args=(Handler.sounds,), daemon=True).start()

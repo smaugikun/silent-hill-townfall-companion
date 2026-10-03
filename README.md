@@ -32,7 +32,8 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
 - **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
   AV OUT when it is laid flat; set on a stand, it goes to AV OUT by default (or stays in VIEW, as chosen).
 - **Pause:** in the game's pause menu, everything on the phone holds too.
-- **Light on the game:** while no phone has the page open, the mod reads nothing from the game.
+- **Light on the game:** while no phone has the page open, the mod reads nothing from the game. The companion
+  closes about a minute after you exit the game (if it was started without the game running, it stays).
 - **PIN:** the phone asks once for the number in `companion.ini`, so nobody else on your network can open the
   page and send the game commands.
 - Vibration for the buttons and nearby signals, and settings for every part of it.
@@ -117,7 +118,8 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    `ue4ss\UE4SS-settings.ini`), which takes effect at the next Townfall launch; `UE4SS.log` still works normally.
    To get a console back for debugging, set those three to `1` again after starting the companion. The first time,
    Windows asks whether Python may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
-   `On the phone: http://192.168.1.50:8790`, and `PIN: 4821`. Keep the window open; closing it stops the companion.
+   `On the phone: http://192.168.1.50:8790`, and `PIN: 4821`. Keep the window open; closing it stops the companion,
+   and it closes by itself about a minute after you exit the game.
 
 ## Setup on the phone
 
@@ -138,7 +140,8 @@ vibrate from a web page. Details, and the Windows firewall settings: [Phone setu
 
 ## Every time you play
 
-1. Double-click **`Start Companion.bat`** and keep its window open. It can start before or after the game.
+1. Double-click **`Start Companion.bat`** and keep its window open. It can start before or after the game, and
+   closes by itself about a minute after you exit the game.
 2. On the phone, open the bookmarked address (the PIN once, then it remembers) and tap the screen once.
 3. Start the game. The phone shows WAITING FOR GAME until you're in gameplay.
 
