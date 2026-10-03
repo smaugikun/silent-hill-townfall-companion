@@ -32,10 +32,12 @@ game, on your PC, and streams them to the phone over your home network:
 - **Sound:** the CRTV's sounds, the signals' voices and the cutscenes' dialogue are decoded from the game's
   FMOD sound banks with vgmstream the first time the phone needs them, and kept in
   `TownfallCompanion\cache\sounds`.
-- **Videos** (optional): `Convert Game Videos.bat` converts the game's Bink videos to MP4 once (RAD Video
-  Tools decodes them, FFmpeg encodes them) into `TownfallCompanion\cache\clips`. Without them, the phone shows
-  static, or its own drawn picture for a monster, where the CRTV plays a video, and the videos on screens in
-  cutscenes don't appear on the phone; the videos' sound then plays on the PC. Everything else works.
+- **Videos** (optional): when the phone first needs one, the companion automatically converts that Bink video
+  to MP4 (RAD Video Tools decodes it, FFmpeg encodes it) and keeps it in `TownfallCompanion\cache\clips`.
+  The first play of a new clip can take a moment; after that it streams immediately from the cache.
+  `Convert Game Videos.bat` is still there only if you want to fill the cache in advance. Without the video
+  tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
+  videos on screens in cutscenes don't appear on the phone; the videos' sound then plays on the PC.
 
 ## Requirements
 
@@ -67,9 +69,11 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    in it.
 4. Unpack **vgmstream** (`vgmstream-win64.zip`) into `TownfallCompanion\tools\`, e.g.
    `TownfallCompanion\tools\vgmstream\`.
-5. *Optional, for the videos:* unpack **RAD Video Tools** and **FFmpeg** into `TownfallCompanion\tools\` too,
-   and double-click **`Convert Game Videos.bat`** once (about 3 minutes). `RADTools.7z` is a 7-Zip archive:
-   Windows 11 opens it (right-click → *Extract All*); on Windows 10 use [7-Zip](https://www.7-zip.org).
+5. *Optional, for the videos:* unpack **RAD Video Tools** and **FFmpeg** into `TownfallCompanion\tools\` too.
+   Nothing needs converting by hand: the companion converts each game video the first time the phone needs it
+   and caches it. If you prefer to prepare every clip beforehand, **`Convert Game Videos.bat`** still does that.
+   `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
+   [7-Zip](https://www.7-zip.org).
 6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. The first time, Windows asks whether Python
    may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
    `On the phone: http://192.168.1.50:8790`. Keep the window open.
