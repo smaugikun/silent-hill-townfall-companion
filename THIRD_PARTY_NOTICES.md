@@ -46,8 +46,10 @@ under the ISC License (copyright its many authors, see its COPYING file).
 
 ## Optional, not included
 
-Used by the companion to convert the game's videos automatically on the user's PC, and by the optional
-`Convert Game Videos.bat` pre-cache step.
+Used by the companion to convert the game's videos automatically on the user's PC. When Townfall starts
+sending telemetry, the companion pre-caches missing videos in the background; a phone request can also
+convert a not-yet-cached clip immediately as a fallback. `Convert Game Videos.bat` is only an optional
+pre-launch pre-cache step.
 
 ### RAD Video Tools
 
