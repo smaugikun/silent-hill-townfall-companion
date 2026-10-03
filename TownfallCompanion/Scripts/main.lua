@@ -51,15 +51,17 @@ local function sample()
     local cutsceneJson = optional("cutscene read", "TF-CUTSCENE", cutscene.json, "null")
     local worldTime = common.tryNumber(function() return player.pawn():GetGameTimeSinceCreation() end)
     local pitch = common.tryNumber(player.pitch) or 0
+    local alive = player.isAlive()
+    logChange("player life", "TF-PLAYER", alive and "alive" or "dead")
 
     local f, err = io.open(telemetryPath, "w")
     if not f then return logChange("telemetry", "TF-COMPANION", "cannot write telemetry: " .. tostring(err)) end
     -- t: when this was read, on the game's clock (s), however late it reaches the phone: the phone
     -- keeps speech in step and runs the fine-tune box by it. world: the world's own clock (s, the player's
     -- time in it), which stands still while the game is paused: the phone then holds everything too.
-    f:write(string.format('{"t":%.3f,"world":%s,"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"pitch":%.1f},"enemies":[%s],'
+    f:write(string.format('{"t":%.3f,"world":%s,"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"pitch":%.1f,"alive":%s},"enemies":[%s],'
         .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s,"cutsceneDialogue":%s}}',
-        os.clock(), common.jsonNumber(worldTime, "%.2f"), x, y, yaw, pitch, enemyJson, signalJson, crtvJson,
+        os.clock(), common.jsonNumber(worldTime, "%.2f"), x, y, yaw, pitch, tostring(alive), enemyJson, signalJson, crtvJson,
         cutsceneJson, tostring(audio.isOff()), tostring(audio.canSilenceDialogue())))
     f:close()
     logChange("telemetry", "TF-COMPANION", "telemetry -> " .. telemetryPath)
