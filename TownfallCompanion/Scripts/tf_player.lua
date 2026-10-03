@@ -10,6 +10,9 @@ local controller = CreateInvalidObject()
 local pawn = CreateInvalidObject() -- gameplay pawn only; invalid in menus and while loading
 local defaultPawnClass = CreateInvalidObject()
 local pawnName
+-- Some Townfall controller instances expose ControlRotation.Yaw through UE4SS but return nil for Pitch.
+-- Keep the last camera pitch we could read or apply so phone tilt can still accumulate normally.
+local fallbackPitch = 0
 
 -- Splash and main menu spawn an engine DefaultPawn at the origin; only gameplay pawns count.
 local function isMenuPawn(p)
@@ -46,7 +49,11 @@ end
 
 -- How far up the camera looks, in degrees (down negative). Unreal keeps it in 0..360: 350 is 10 down.
 function M.pitch()
-    return (controller:GetControlRotation().Pitch + 180) % 360 - 180
+    local pitch = common.tryNumber(function() return controller:GetControlRotation().Pitch end)
+    if pitch ~= nil then
+        fallbackPitch = (pitch + 180) % 360 - 180
+    end
+    return fallbackPitch
 end
 
 -- Turns the player by `degrees` (clockwise) and looks up by `up` degrees (down negative; nil or 0 keeps the
@@ -60,11 +67,14 @@ function M.turn(degrees, up)
     -- Do not let phone tilt break yaw steering: use the last telemetry-safe camera pitch when available,
     -- otherwise keep level. (A missing Roll is harmless; Townfall's camera does not use it here.)
     local pitch = common.tryNumber(function() return rotation.Pitch end)
-    if pitch == nil then pitch = common.tryNumber(M.pitch) or 0 end
-    if up and up ~= 0 then
-        pitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, (pitch + 180) % 360 - 180 + up))
+    if pitch ~= nil then
+        fallbackPitch = (pitch + 180) % 360 - 180
     end
-    controller:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
+    if up and up ~= 0 then
+        fallbackPitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, fallbackPitch + up))
+    end
+    controller:SetControlRotation({ Pitch = fallbackPitch, Yaw = yaw,
+                                    Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
     local now = controller:GetControlRotation().Yaw
     if angleDelta(now, yaw) > 1 then
         logChange("turn check", "TF-PLAYER", string.format("turn by %.1f didn't take: yaw %.1f, wanted %.1f",
