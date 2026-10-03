@@ -6,9 +6,7 @@ Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfal
 shows and plays its sound and the signals' voices, and it can tune it and turn your character as if you were
 holding it. The phone needs no app, only its browser.
 
-<!-- github-only -->
 Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**, where the install archive is downloaded.
-<!-- /github-only -->
 
 - **A CRTV in your hand:** the device with its screen, dial, AV OUT / VIEW switch, TUNING buttons and F key (save / confirm frequency).
 - **VIEW:** the CRTV is on the phone. It finds the monsters and signals from the game, shows them on its dial

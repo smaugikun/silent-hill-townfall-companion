@@ -5,6 +5,3 @@ __pycache__/
 TownfallCompanion/companion.ini
 TownfallCompanion/cache/
 TownfallCompanion/tools/
-
-# The release archive (tools/build-package.py).
-dist/
