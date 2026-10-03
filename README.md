@@ -3,179 +3,88 @@
 ![Townfall Companion](docs/images/banner.webp)
 
 Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfall**: it shows what the CRTV
-shows and plays its sound and the signals' voices, and it can tune it and turn your character as if you were
-holding it. The phone needs no app, only its browser.
+shows, plays its sound and the signals' voices, and can tune it and turn your character. The phone needs no app,
+only its browser.
 
 Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**, where the install archive is downloaded.
 
-- **A CRTV in your hand:** the device with its screen, dial, AV OUT / VIEW switch, TUNING buttons and F key (save / confirm frequency).
-- **VIEW:** the CRTV is on the phone. It finds the monsters and signals from the game, shows them on its dial
-  and screen with their videos, and plays the CRTV's sound and the voices; turning the phone turns the
-  scanner's view, up and down too. Its TUNING buttons tune the game's CRTV as well, so it comes up where the
-  phone left it, and while that one is up the phone shows it, the fine-tune mini-game included, and F
-  saves / confirms the tuned frequency. The monsters on the phone are an interpretation; the game's models are not
-  included.
-- **In VIEW, show the game's CRTV on the monitor** (optional, off by default): in VIEW the game's CRTV is always
-  switched on, so the signals' voices, the subtitles and the fine-tune mini-game come to the phone. With this on,
-  your character raises the CRTV as with L1 on a controller and you see it on the monitor; off, it works without
-  showing.
-- **Sound:** in VIEW the phone plays the CRTV's sounds and the signals' voices (and their videos' sound), and with
-  **Silence it in the game** on, the game's copy of what the phone plays goes quiet, so nothing is heard twice.
-  Only what comes out of the CRTV moves to the phone: the story cutscenes' dialogue and music stay in the game.
-  The volume slider is the phone's own; at 0 the game plays its sound again.
-- **AV OUT:** the CRTV is on the PC, with all its sound; the phone mirrors the picture or stays dark, and its
-  buttons still tune, and F saves / confirms the frequency.
-- **The phone steers your character** (optional, off by default): in VIEW, turning the phone turns your
-  character left/right. After about **4 seconds completely still**, steering rests; pick up or move the phone
-  again and it activates automatically. Phone tilt still changes the scanner view, but does not take over
-  Townfall's vertical game camera.
-- **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
-  AV OUT when it is laid flat; set on a stand, it goes to AV OUT by default (or stays in VIEW, as chosen).
-- **Pause:** in the game's pause menu, everything on the phone holds too.
-- **Light on the game:** while no phone has the page open, the mod reads nothing from the game. The companion
-  closes about a minute after you exit the game (if it was started without the game running, it stays).
-- **PIN:** the phone asks once for the number in `companion.ini`, so nobody else on your network can open the
-  page and send the game commands.
-- Vibration for the buttons and nearby signals, and settings for every part of it.
+## Features
 
-## Screenshots
+- **VIEW:** the CRTV is on the phone. It shows the monsters and signals from the game on its dial and screen,
+  with their videos, and plays the CRTV's sound and the voices. Turning the phone turns the scanner's view. The
+  TUNING buttons tune the game's CRTV too, and F saves / confirms the frequency, the fine-tune mini-game included.
+- **AV OUT:** the CRTV stays on the PC with all its sound; the phone mirrors the picture or stays dark.
+- **Sound:** the phone plays the CRTV's sounds and the signals' voices. *Silence it in the game* quiets the
+  game's copy so nothing is heard twice. Only what comes out of the CRTV moves to the phone; the story cutscenes
+  stay in the game.
+- **Show the game's CRTV on the monitor** (optional): your character raises the CRTV as with L1. Off, it works
+  without showing on the monitor.
+- **The phone steers your character** (optional): in VIEW, turning the phone turns your character.
+- **Auto pickup** (optional): picking the phone up switches to VIEW, laying it flat or setting it on a stand to
+  AV OUT.
+- Pause support, vibration, a **PIN** so others on your network can't open the page, and settings for all of it.
 
 | CRTV video | Monster scanner | Settings |
 | --- | --- | --- |
 | ![CRTV video on the phone](docs/images/crtv-blue.jpg) | ![Monster scanner on the phone](docs/images/crtv-red.jpg) | ![Townfall Companion settings](docs/images/settings.jpg) |
 
-## The game's sound and videos
-
-The mod contains no files from the game. The companion takes the sound and videos from your own copy of the
-game, on your PC, and streams them to the phone over your home network:
-
-- **Sound:** the CRTV's sounds and the signals' voices are decoded from the game's
-  FMOD sound banks with vgmstream the first time the phone needs them, and kept in
-  `TownfallCompanion\cache\sounds`.
-- **Videos:** no manual conversion step is required before playing. As soon as the companion starts, it begins converting all missing videos to small phone MP4s in the background and
-  keeps them in `TownfallCompanion\cache\clips`. If you reach a clip before the background job gets to it,
-  that one converts immediately on request as a fallback. `Convert Game Videos.bat` is only a manual pre-cache shortcut: run it beforehand if you want every
-  video cached before the game starts, so no conversion runs during play.
-  RAD runs hidden in the background using its reliable Bink-to-AVI path; FFmpeg immediately makes the small
-  cached MP4 and the temporary AVI is deleted. Closing the companion also stops an active conversion. On the
-  next start, completed MP4s are skipped and conversion continues with whatever is still missing.
-  Without the video tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
-  videos on screens in cutscenes don't appear on the phone; the videos' sound then plays on the PC.
-
 ## Requirements
 
-- **[UE4SS for SILENT HILL Townfall](https://www.nexusmods.com/silenthilltownfall/mods/4)** by AeonGreyh.
-  UE4SS ([RE-UE4SS on GitHub](https://github.com/UE4SS-RE/RE-UE4SS)) is a scripting system for Unreal Engine
-  games; it runs this mod's in-game part, which reads the CRTV, the player and the monsters and carries out the
-  phone's commands. Townfall needs AeonGreyh's package: it contains a fix without which the UE4SS releases on
-  GitHub crash the game. Install it into `Townfall\Binaries\Win64` as its page describes.
-- **[Python](https://www.python.org/downloads/) 3.10 or newer**: runs the companion on the PC (the server the
-  phone connects to, the sound decoding and the video converter). When installing, tick **"Add python.exe to
-  PATH"** so the mod's `.bat` files can find it.
-- **[vgmstream](https://vgmstream.org)** (`vgmstream-win64.zip`, tested with r2117): reads the game's sound
-  banks. Without it, the phone is silent.
-- **[RAD Video Tools](https://www.radgametools.com/bnkdown.htm)** (`RADTools.7z`,
-  tested with 2026.06) and **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** (tested with 9.0.2).
-- A phone with Chrome (Android) on the same Wi-Fi as the PC. iPhones work with
-  [limits](docs/PHONE_SETUP.md#3-iphone).
+- **[UE4SS for SILENT HILL Townfall](https://www.nexusmods.com/silenthilltownfall/mods/4)** by AeonGreyh, installed as
+  its page says. The UE4SS releases on GitHub crash this game; this package has the fix.
+- **[Python](https://www.python.org/downloads/) 3.10 or newer**, with **"Add python.exe to PATH"** ticked.
+- **[vgmstream](https://vgmstream.org)** (`vgmstream-win64.zip`): reads the game's sound. Without it the phone is silent.
+- **[RAD Video Tools](https://www.radgametools.com/bnkdown.htm)** (`RADTools.7z`) and
+  **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)**: convert the game's videos for the phone. Without them the
+  phone shows static or a drawn picture where the CRTV plays a video.
+- A phone with Chrome (Android) on the same Wi-Fi as the PC. iPhones work with [limits](docs/PHONE_SETUP.md#3-iphone).
 
 Tested on SILENT HILL: Townfall Steam build 25534608.
 
-## Installation on the PC
+## Installation
 
-1. Install **UE4SS for SILENT HILL Townfall** as its Nexus page says. Start the game once to check that it
-   runs, then close it.
-2. Install **Python**, with **"Add python.exe to PATH"** ticked.
-3. Open the game's folder: in Steam, right-click SILENT HILL: Townfall → *Manage* → *Browse local files*. Go
-   into `Townfall\Binaries\Win64\ue4ss\Mods` and put the mod's **`TownfallCompanion` folder** there: from the
-   Nexus download, or, if you took the source from GitHub (*Code* → *Download ZIP*), the `TownfallCompanion`
-   folder inside it, not the whole download. `enabled.txt` must end up directly in `Mods\TownfallCompanion\`,
-   not in `Mods\TownfallCompanion\TownfallCompanion\`, or UE4SS won't load the mod:
-
-   ```text
-   ...\ue4ss\Mods\TownfallCompanion\
-       enabled.txt
-       Start Companion.bat
-       Convert Game Videos.bat
-       Scripts\
-       companion\
-       tools\
-           vgmstream\    vgmstream-cli.exe and 11 .dll files
-           radtools\     radvideo64.exe
-           ffmpeg\       ffmpeg.exe
-   ```
-
-4. Put **vgmstream** (`vgmstream-win64.zip`) in `TownfallCompanion\tools\vgmstream\`. Every folder in `tools`
-   has a `PUT FILES HERE.txt` that lists exactly which files must be in it and where to download them.
-5. Put **RAD Video Tools** (`radvideo64.exe`) in `TownfallCompanion\tools\radtools\` and **FFmpeg**
-   (`ffmpeg.exe`) in `TownfallCompanion\tools\ffmpeg\`.
-   That's all you need: when the companion starts, it automatically pre-caches missing videos in the background—so it can work while Townfall is still at the splash screen or main menu. **You do not need to run `Convert Game Videos.bat`**. You can run it anyway before launching
-   the game if you want every clip ready immediately and no background conversion during play.
-   `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
+1. Install UE4SS for Townfall and Python. Start the game once to check it runs, then close it.
+2. Put the mod's **`TownfallCompanion` folder** into `Townfall\Binaries\Win64\ue4ss\Mods` (Steam: *Manage* →
+   *Browse local files*). `enabled.txt` must be directly in `Mods\TownfallCompanion\`, not one folder deeper.
+3. Put the downloaded tools in the folders under `TownfallCompanion\tools\`: `vgmstream\`, `radtools\`
+   (`radvideo64.exe`) and `ffmpeg\` (`ffmpeg.exe`). Each folder has a `PUT FILES HERE.txt` listing exactly what
+   goes in it. `RADTools.7z` opens with right-click → *Extract All* on Windows 11, or with
    [7-Zip](https://www.7-zip.org).
-6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. Each time it starts it also switches off UE4SS's
-   debug console windows (`ConsoleEnabled`, `GuiConsoleEnabled` and `GuiConsoleVisible` in
-   `ue4ss\UE4SS-settings.ini`), which takes effect at the next Townfall launch; `UE4SS.log` still works normally.
-   To get a console back for debugging, set those three to `1` again after starting the companion. The first time,
-   Windows asks whether Python may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
-   `On the phone: http://192.168.1.50:8790`, and `PIN: 4821`. Keep the window open; closing it stops the companion,
-   and it closes by itself about a minute after you exit the game.
-
-## Setup on the phone
-
-1. Connect the phone to the **same Wi-Fi** as the PC (not a guest network).
-2. Open **Chrome** (Android) or **Safari** (iPhone) and enter the address from the companion's window, with the
-   port, e.g. `http://192.168.1.50:8790`. Bookmark it: it stays the same as long as the PC keeps its network
-   address.
-3. Enter the **PIN** the companion's window shows (it is also `pin` in `companion.ini`); the phone remembers it.
-   Five wrong tries lock that phone out for a minute.
-4. Tap the screen once. Browsers play sound and vibrate only after a tap.
-5. *Android, recommended, once:* in Chrome, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
-   set **Insecure origins treated as secure** to **Enabled**, enter the same address in its text box, and tap
-   **Relaunch**.
-
-Without the Chrome flag, turning the scanner's view or the character with the phone, Auto pickup and keeping
-the screen on don't work; everything else does. iPhones (Safari) have no such flag and can't
-vibrate from a web page. Details, and the Windows firewall settings: [Phone setup](docs/PHONE_SETUP.md).
+4. Double-click **`Start Companion.bat`** (the first time Windows asks about the network: allow Python on
+   **private networks**). It converts the game's videos in the background, and its window shows the address
+   for the phone and the PIN. Each time it starts it also hides UE4SS's console windows
+   (`ue4ss\UE4SS-settings.ini`), which applies at the next game launch.
+5. On the phone, open that address in Chrome and bookmark it, enter the PIN once, and tap the screen once
+   (browsers play sound only after a tap). On Android, also set Chrome's *Insecure origins treated as secure*
+   flag for that address, or turning the phone and Auto pickup won't work: [Phone setup](docs/PHONE_SETUP.md).
 
 ## Every time you play
 
-1. Double-click **`Start Companion.bat`** and keep its window open. It can start before or after the game, and
-   closes by itself about a minute after you exit the game.
-2. On the phone, open the bookmarked address (the PIN once, then it remembers) and tap the screen once.
+1. Double-click **`Start Companion.bat`** and keep its window open. It closes by itself about a minute after you
+   exit the game.
+2. Open the bookmarked address on the phone.
 3. Start the game. The phone shows WAITING FOR GAME until you're in gameplay.
 
-The PIN keeps others on your network out of the page, but it is not encryption: use the companion only on your
-home network. Set `pin =` empty in `companion.ini` to turn it off, or another number of 4 to 12 digits. A
-settings file from an older version has no PIN until you add one. When the companion closes it also removes the
-small files it and the mod keep in your Windows temp folder (`townfall-companion-*.json`).
+The PIN keeps others on your network out, but it isn't encryption: use the companion on your home network only.
+You can change it, or turn it off, with `pin` in `companion.ini`.
 
-## Updating
-
-Close the companion and the game, delete the `Scripts` and `companion` folders in `TownfallCompanion`, and
-extract the new version over it. Your settings (`companion.ini`), converted videos and sounds (`cache`) and
-tools stay.
-
-## Uninstalling
-
-Close the companion and the game, and delete `...\ue4ss\Mods\TownfallCompanion`. That removes everything the
-mod made too (the companion deletes its small files in the Windows temp folder when it closes). UE4SS and Python stay; other mods may use them.
+**Updating:** close the companion and the game, delete the `Scripts` and `companion` folders in `TownfallCompanion`
+and extract the new version over it. Your settings, cache and tools stay.
+**Uninstalling:** delete `...\ue4ss\Mods\TownfallCompanion`.
 
 ## Troubleshooting
 
-- **The phone can't open the page:** same Wi-Fi? Python allowed through the Windows firewall on private
-  networks? Your Wi-Fi set to *Private* in Windows? Use the address the window shows, not `127.0.0.1`.
-- **"Already running":** a companion is open already (check the taskbar); use that one, or close it first.
-- **PIN forgotten:** it is in the companion's window and as `pin` in `companion.ini`.
-- **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has
-  `[TF-COMPANION] Townfall Companion loaded`.
-- **No sound:** tap the phone once, keep its screen on, and check the companion's window for "Game sounds
-  unavailable" and what it says to do (usually: vgmstream is missing).
-- **"Port 8790 is taken":** not an error; use the new address the window shows, or set a fixed port in
-  `companion.ini`.
-- **After a game update:** UE4SS for Townfall may need an update, and possibly this mod.
+- **The phone can't open the page:** same Wi-Fi, Python allowed through the firewall on private networks, and the
+  address from the window (not `127.0.0.1`).
+- **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has `[TF-COMPANION] Townfall Companion loaded`.
+- **No sound:** tap the phone once, keep its screen on, and check the window for "Game sounds unavailable"
+  (usually vgmstream is missing).
+- **PIN forgotten:** it is in the window and as `pin` in `companion.ini`.
 
 More: [Troubleshooting](docs/TROUBLESHOOTING.md) · [Phone setup](docs/PHONE_SETUP.md)
+
+The mod contains no files from the game: the companion decodes the sounds and converts the videos from your own
+copy, on your PC, and keeps them in `TownfallCompanion\cache`.
 
 ## Credits
 
