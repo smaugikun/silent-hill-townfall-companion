@@ -722,6 +722,16 @@ class SteeringTest(ModTest):
         self.world.tick(1)
         self.assertEqual(self.world.controlRotation()[1], 40)
 
+    def test_missing_control_pitch_does_not_break_yaw_steering(self):
+        self.play()
+        self.steer(100)
+        self.world.tick(1)
+        self.world.dropControlPitch()
+        self.steer(130)
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[1], 70)
+        self.assertEqual(self.logged("[TF-PLAYER] turned by the phone"), 1)
+
     def test_a_turn_the_game_refuses_is_logged(self):
         self.play()
         self.world.lockCamera()
