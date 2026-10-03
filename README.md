@@ -117,7 +117,7 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    `ue4ss\UE4SS-settings.ini`), which takes effect at the next Townfall launch; `UE4SS.log` still works normally.
    To get a console back for debugging, set those three to `1` again after starting the companion. The first time,
    Windows asks whether Python may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
-   `On the phone: http://192.168.1.50:8790`, and `PIN: 123456`. Keep the window open; closing it stops the companion.
+   `On the phone: http://192.168.1.50:8790`, and `PIN: 4821`. Keep the window open; closing it stops the companion.
 
 ## Setup on the phone
 

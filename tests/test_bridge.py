@@ -439,7 +439,7 @@ class StartupTest(unittest.TestCase):
         self.assertIn("listen = 0.0.0.0", text)
         self.assertIn("[paths]", text)
         pin = [line for line in text.splitlines() if line.startswith("pin =")][0].split("=")[1].strip()
-        self.assertRegex(pin, r"^\d{6}$")  # a new settings file gets a random PIN
+        self.assertRegex(pin, r"^\d{4}$")  # a new settings file gets a random PIN
 
     def test_the_port_comes_from_the_settings(self):
         port = free_port()

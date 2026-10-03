@@ -85,7 +85,7 @@ def load(path=SETTINGS_FILE):
     path = Path(path)
     if not path.exists():
         try:
-            path.write_text(DEFAULT_SETTINGS.replace("\npin =\n", f"\npin = {secrets.randbelow(10 ** 6):06d}\n"),
+            path.write_text(DEFAULT_SETTINGS.replace("\npin =\n", f"\npin = {secrets.randbelow(10 ** 4):04d}\n"),
                             encoding="utf-8")
         except OSError:
             pass  # a folder we can't write to: the defaults it is
