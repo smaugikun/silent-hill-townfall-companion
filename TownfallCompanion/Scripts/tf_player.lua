@@ -27,6 +27,56 @@ function M.isTracking()
     return pawn:IsValid()
 end
 
+local function tryBool(fn)
+    local ok, value = pcall(fn)
+    return ok and type(value) == "boolean" and value or nil
+end
+
+-- Whether the gameplay pawn is alive. Townfall keeps its pawn around during some death/retry states, so
+-- "valid pawn" alone is not enough for the phone: otherwise the scanner keeps animating after Bill dies.
+-- Different builds expose this through slightly different Blueprint/native names; every probe is optional.
+function M.isAlive()
+    if not pawn:IsValid() then return false end
+
+    for _, fn in ipairs({
+        function() return pawn:IsDead() end,
+        function() return pawn:GetIsDead() end,
+        function() return pawn.bIsDead end,
+        function() return pawn.bDead end,
+    }) do
+        local dead = tryBool(fn)
+        if dead ~= nil then return not dead end
+    end
+    for _, fn in ipairs({
+        function() return pawn:IsAlive() end,
+        function() return pawn.GetIsAlive and pawn:GetIsAlive() end,
+        function() return pawn.bIsAlive end,
+    }) do
+        local alive = tryBool(fn)
+        if alive ~= nil then return alive end
+    end
+
+    for _, fn in ipairs({
+        function() return pawn.Health end,
+        function() return pawn.CurrentHealth end,
+        function() return pawn.HitPoints end,
+        function() return pawn.CurrentHP end,
+    }) do
+        local health = common.tryNumber(fn)
+        if health ~= nil then return health > 0 end
+    end
+
+    -- APlayerController commonly leaves Playing for Spectating/Inactive when its pawn dies.
+    local ok, state = pcall(function() return tostring(controller:GetStateName()) end)
+    if ok and state then
+        state = state:lower()
+        if state:find("spectat", 1, true) or state:find("inactive", 1, true) or state:find("dead", 1, true) then
+            return false
+        end
+    end
+    return true
+end
+
 -- The gameplay pawn (an ATownfallPlayerCharacter), or an invalid object in menus and while loading.
 function M.pawn()
     return pawn
