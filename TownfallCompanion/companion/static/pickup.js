@@ -8,7 +8,8 @@
 // still moment, it is in hand again (taps on the screen shake a stand, but it is still between them).
 // Without a gyroscope, only how it lies tells.
 //
-// Lying flat or resting, the phone doesn't turn the character (scanner.js steers()). Resting STAND_MS, not
+// Lying flat or resting for 4 s, the phone doesn't turn the character (scanner.js steers()). Moving/picking
+// it up clears resting and steering resumes. Resting STAND_MS longer, not
 // flat, it stands on a stand (a hand is never that still for so long). With Auto pickup (Settings) raising
 // it and laying it flat slide the selector, as the character raises and lowers the CRTV; taking it off a
 // stand slides it to VIEW, and setting it on one to AV OUT only if chosen (standAvOut). Only a change
@@ -22,10 +23,10 @@ const SETTLE_MS = 600;
 const GRAVITY_MS = 150; // gravity is the acceleration smoothed over about this long: a knock doesn't tilt it
 const TURNING_MS = 50;  // the turning speed, over about this long: short enough to show a still moment
 const STILL_DEG_S = 0.5;
-const REST_MS = 2000;
+const REST_MS = 4000; // four seconds truly still: then steering rests until the phone moves again
 const MOVED_DEG = 6;
 const STIR_MS = 2000;
-const STAND_MS = 1000; // resting this long besides (some 3 s still in all), it stands on a stand
+const STAND_MS = 1000; // another second after resting (about 5 s still in all): consider it on a stand
 
 export const pickup = {
   auto: loadFlag("tfc.autoPickup", false), // Auto pickup: the selector follows
