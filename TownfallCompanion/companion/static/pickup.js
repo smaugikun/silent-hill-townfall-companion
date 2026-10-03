@@ -3,17 +3,15 @@
 // Gravity tells how it lies: laid flat (under FLAT_DEG from level, face up or down) for SETTLE_MS puts it
 // down, raised (more than RAISED_DEG) for CONFIRM_MS picks it up, and in between it stays as it was. A
 // stand or a holder keeps it raised, so how still it is tells too: a hand always moves it a little, a
-// stand doesn't. Turning less than STILL_DEG_S for REST_MS, it rests; tilted or turned more than MOVED_DEG
-// from how it rested (turning it about the vertical leaves the tilt as it was), or moving STIR_MS without a
-// still moment, it is in hand again (taps on the screen shake a stand, but it is still between them).
+// stand doesn't. Steering rests only after REST_MS of stillness. Stand detection is separate and faster:
+// a raised phone that settles very still is considered on a stand after a short confirmation. A placement
+// bump (when linear acceleration is available) makes that confirmation faster; this avoids tying the stand
+// action to the four-second steering timer. Moving/turning it again takes it off the stand.
 // Without a gyroscope, only how it lies tells.
 //
-// Lying flat or resting for 4 s, the phone doesn't turn the character (scanner.js steers()). Moving/picking
-// it up clears resting and steering resumes. Resting STAND_MS longer, not
-// flat, it stands on a stand (a hand is never that still for so long). With Auto pickup (Settings) raising
-// it and laying it flat slide the selector, as the character raises and lowers the CRTV; taking it off a
-// stand slides it to VIEW, and setting it on one to AV OUT only if chosen (standAvOut). Only a change
-// does, so lying flat when the selector was slid by hand leaves it where it is.
+// Lying flat or resting for 4 s stops character steering (scanner.js steers()); movement wakes steering.
+// With Auto pickup, raising/picking up goes to VIEW, lying flat goes to AV OUT, and a detected stand goes
+// to whichever position the Stand setting says (VIEW or AV OUT).
 import { loadFlag, saveSetting } from "./util.js";
 
 const RAISED_DEG = 30;  // held up to look at, or pointed ahead like the CRTV
@@ -26,7 +24,16 @@ const STILL_DEG_S = 0.5;
 const REST_MS = 4000; // four seconds truly still: then steering rests until the phone moves again
 const MOVED_DEG = 6;
 const STIR_MS = 2000;
-const STAND_MS = 1000; // another second after resting (about 5 s still in all): consider it on a stand
+
+// A stand is a different question from "resting": detect it quickly enough to move the selector.
+// There is no browser "phone is in a stand" sensor, so this is deliberately a short settle heuristic.
+const STAND_STILL_DEG_S = 0.25;
+const STAND_FAST_MS = 350;      // after the small bump typical of putting the phone into a holder
+const STAND_FALLBACK_MS = 1200; // gentle placement / browsers without linear acceleration
+const STAND_BUMP_MS2 = 0.8;
+const STAND_ARM_MS = 1200;
+const STAND_RELEASE_DEG_S = 4;
+const STAND_RELEASE_MS = 250;
 
 export const pickup = {
   auto: loadFlag("tfc.autoPickup", false), // Auto pickup: the selector follows
@@ -34,7 +41,7 @@ export const pickup = {
   resting: false, // standing still, however it is tilted
   tilt: null,     // degrees from lying flat, once the sensor has read
   turning: null,  // how fast it turns (degrees a second), once the gyroscope has read
-  onStand: false, // resting STAND_MS, not flat
+  onStand: false, // raised and settled very still
   standAvOut: loadFlag("tfc.standAvOut", false), // Auto pickup: set on a stand, it goes to AV OUT
 };
 
@@ -61,7 +68,11 @@ let quietSince = null;   // since when it has turned slower than STILL_DEG_S
 let quietAt = 0;         // when it last did
 let restingGravity = null;
 let turnedSinceRest = [0, 0, 0]; // degrees turned about each axis since it came to rest (signed: noise evens out)
-let restingSince = null;
+
+let standQuietSince = null;
+let standArmedUntil = 0;
+let standGravity = null;
+let standMovedSince = null;
 
 function step(now) {
   const flat = pickup.tilt < FLAT_DEG, raised = pickup.tilt > RAISED_DEG;
@@ -74,6 +85,10 @@ function step(now) {
     turningSince = null;
   }
   pickup.down = flat;
+  if (flat && pickup.onStand) {
+    pickup.onStand = false;
+    standQuietSince = standGravity = standMovedSince = null;
+  }
   tellPutDown();
   for (const fn of listeners) fn(!pickup.down, first, false);
 }
@@ -81,40 +96,64 @@ function step(now) {
 const degreesBetween = (a, b) =>
   Math.acos(Math.min(1, a.reduce((sum, v, i) => sum + v * b[i], 0) / (Math.hypot(...a) * Math.hypot(...b)))) * 180 / Math.PI;
 
-function rest(rate, k, ms, now) {
+function rest(rate, k, ms, now, acceleration) {
   if (rate?.alpha == null) return;
-  const speed = Math.hypot(rate.alpha, rate.beta ?? 0, rate.gamma ?? 0);
+  const rates = [rate.alpha, rate.beta ?? 0, rate.gamma ?? 0];
+  const speed = Math.hypot(...rates);
   pickup.turning = pickup.turning == null ? speed : pickup.turning + k * (speed - pickup.turning);
+
+  // Fast stand detection, independent from the four-second steering-rest timer.
+  const raised = pickup.down === false;
+  const bump = acceleration?.x == null ? 0
+    : Math.hypot(acceleration.x, acceleration.y ?? 0, acceleration.z ?? 0);
+  if (raised && bump >= STAND_BUMP_MS2) standArmedUntil = now + STAND_ARM_MS;
+  const standQuiet = raised && pickup.turning < STAND_STILL_DEG_S;
+
+  if (!pickup.onStand) {
+    standQuietSince = standQuiet ? standQuietSince ?? now : null;
+    const settle = now <= standArmedUntil ? STAND_FAST_MS : STAND_FALLBACK_MS;
+    if (standQuietSince != null && now - standQuietSince >= settle) {
+      pickup.onStand = true;
+      standGravity = gravity;
+      standMovedSince = null;
+      for (const fn of listeners) fn(false, false, true);
+    }
+  } else {
+    const moved = !raised || pickup.turning > STAND_RELEASE_DEG_S
+      || (standGravity && degreesBetween(gravity, standGravity) > MOVED_DEG);
+    standMovedSince = moved ? standMovedSince ?? now : null;
+    if (standMovedSince != null && now - standMovedSince >= STAND_RELEASE_MS) {
+      pickup.onStand = false;
+      standQuietSince = null;
+      standGravity = null;
+      standMovedSince = null;
+      for (const fn of listeners) fn(true, false, true);
+    }
+  }
+
+  // Character steering has a deliberately longer rest timer than stand detection.
   const quiet = pickup.turning < STILL_DEG_S;
   quietSince = quiet ? quietSince ?? now : null;
   if (quiet) quietAt = now;
+
   if (!pickup.resting) {
-    if (quietSince == null || now - quietSince < REST_MS) return;
-    pickup.resting = true;
-    restingSince = now;
-    restingGravity = gravity;
-    turnedSinceRest = [0, 0, 0];
-  } else {
-    const seconds = Math.min(ms, 100) / 1000;
-    turnedSinceRest = turnedSinceRest.map((v, i) => v + [rate.alpha, rate.beta ?? 0, rate.gamma ?? 0][i] * seconds);
-    const moved = degreesBetween(gravity, restingGravity) > MOVED_DEG || Math.hypot(...turnedSinceRest) > MOVED_DEG;
-    if (!moved && now - quietAt < STIR_MS) {
-      // Set on a stand (lying flat puts it down by its tilt instead).
-      if (quiet && !pickup.onStand && pickup.down === false && now - restingSince >= STAND_MS) {
-        pickup.onStand = true;
-        for (const fn of listeners) fn(false, false, true);
-      }
-      return;
-    }
-    pickup.resting = false;
-    quietSince = null; // resting again takes REST_MS of stillness from here
-    tellPutDown();
-    if (pickup.onStand) {
-      pickup.onStand = false;
-      for (const fn of listeners) fn(true, false, true);
+    if (quietSince != null && now - quietSince >= REST_MS) {
+      pickup.resting = true;
+      restingGravity = gravity;
+      turnedSinceRest = [0, 0, 0];
+      tellPutDown();
     }
     return;
   }
+
+  const seconds = Math.min(ms, 100) / 1000;
+  turnedSinceRest = turnedSinceRest.map((v, i) => v + rates[i] * seconds);
+  const movedFromRest = degreesBetween(gravity, restingGravity) > MOVED_DEG
+    || Math.hypot(...turnedSinceRest) > MOVED_DEG;
+  if (!movedFromRest && now - quietAt < STIR_MS) return;
+
+  pickup.resting = false;
+  quietSince = null; // resting again takes a fresh REST_MS
   tellPutDown();
 }
 
@@ -130,7 +169,7 @@ function motionHandler(e) {
   if (size < 2) return; // falling, or no real reading
   pickup.tilt = Math.acos(Math.min(1, Math.abs(gravity[2]) / size)) * 180 / Math.PI;
   step(now);
-  rest(e.rotationRate, 1 - Math.exp(-since / TURNING_MS), since, now);
+  rest(e.rotationRate, 1 - Math.exp(-since / TURNING_MS), since, now, e.acceleration);
 }
 
 // Reads the sensor from now on. iOS asks first, and only from a tap; elsewhere it starts on load, so
