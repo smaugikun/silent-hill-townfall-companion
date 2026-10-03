@@ -183,11 +183,20 @@ class GameVideos:
             print("Game videos: automatic pre-cache can't start: " + self.problem, flush=True)
             return
 
-        todo = [key for key in sorted(self.index) if not (self.cache_dir / Path(key)).is_file()]
+        # Do not eagerly feed obvious developer/test assets to RAD. Some shipping builds contain Bink
+        # test loops that RAD's converter refuses (and may show its own Windows error dialog). Keep them
+        # indexed so request-time fallback can still try one if the game ever really asks for it.
+        todo = [key for key in sorted(self.index)
+                if "_test_" not in Path(key).stem.lower()
+                and not (self.cache_dir / Path(key)).is_file()]
         if not todo:
             print(f"Game videos: all {len(self.index)} already cached.", flush=True)
             return
-        print(f"Game videos: game started; pre-caching {len(todo)} missing clip(s) in the background ...", flush=True)
+        skipped = sum(1 for key in self.index
+                      if "_test_" in Path(key).stem.lower()
+                      and not (self.cache_dir / Path(key)).is_file())
+        extra = f"; skipped {skipped} test clip(s)" if skipped else ""
+        print(f"Game videos: pre-caching {len(todo)} missing clip(s) in the background{extra} ...", flush=True)
         threading.Thread(target=self._precache, args=(todo,), daemon=True, name="townfall-video-precache").start()
 
     def _precache(self, keys):
