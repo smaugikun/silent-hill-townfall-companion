@@ -4,18 +4,18 @@ Your phone becomes the CRTV, the handheld TV scanner from **SILENT HILL: Townfal
 shows and plays its sound and the signals' voices, and it can tune it and turn your character as if you were
 holding it. The phone needs no app, only its browser.
 
-- **A CRTV in your hand:** the device with its screen, dial, AV OUT / VIEW switch, TUNING buttons and F key.
+- **A CRTV in your hand:** the device with its screen, dial, AV OUT / VIEW switch, TUNING buttons and F key (save / confirm frequency).
 - **VIEW:** the CRTV is on the phone. It finds the monsters and signals from the game, shows them on its dial
   and screen with their videos, and plays the CRTV's sound and the voices; turning the phone turns the
   scanner's view, up and down too. Its TUNING buttons tune the game's CRTV as well, so it comes up where the
   phone left it, and while that one is up the phone shows it, the fine-tune mini-game included, and F
-  presses the fine-tune key. The monsters on the phone are an interpretation; the game's models are not
+  saves / confirms the tuned frequency. The monsters on the phone are an interpretation; the game's models are not
   included.
 - **In VIEW, switch on the game's CRTV** (optional, off by default): the game's CRTV works as if raised, with
   the signals' voices, the subtitles and the fine-tune mini-game, all on the phone, without showing on the
   monitor.
 - **AV OUT:** the CRTV is on the PC, with all its sound; the phone mirrors the picture or stays dark, and its
-  buttons still tune and press F.
+  buttons still tune, and F saves / confirms the frequency.
 - **The phone steers your character** (optional, off by default): in VIEW, turning the phone turns your
   character left/right. After about **4 seconds completely still**, steering rests; pick up or move the phone
   again and it activates automatically. Phone tilt still changes the scanner view, but does not take over
