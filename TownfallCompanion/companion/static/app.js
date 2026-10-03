@@ -360,6 +360,7 @@ function goFullScreen() {
 const GAME_SOUND_REQUEST_MS = 2000;
 let gameSoundAsked = false;
 let talkingNow = null; // what talks on the phone now: a cutscene's dialogue track or a waypoint's line
+let crtvUpNow = false; // the game's CRTV is up (a waypoint's line may start any moment)
 let crtvVideoNow = false; // the phone plays the game's CRTV screen video out loud (its converted copy)
 
 // Whether the phone plays the CRTV's sound, talking included: in VIEW unless switched off, in AV OUT
@@ -633,6 +634,9 @@ function render(now) {
   const said = shown ? spokenLine(state.signals) : null;
   const line = updateLine(said && {...said, at: sampledAt}, playing, holdMedia);
   if ((line ?? scene) !== talkingNow) { talkingNow = line ?? scene; requestGameSound(); }
+  // The game's CRTV coming up (or going down) changes what is asked of the game at once, not 2 s later.
+  const crtvUp = Boolean(state.crtv?.active);
+  if (crtvUp !== crtvUpNow) { crtvUpNow = crtvUp; requestGameSound(); }
   updateSound({
     playing: playing && !holdMedia, // the talking holds by itself: its time stands still too
     game: view.source === "game",
