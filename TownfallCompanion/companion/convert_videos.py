@@ -145,6 +145,7 @@ class _ChildProcesses:
 
         process = subprocess.Popen(
             [str(a) for a in args],
+            stdin=subprocess.DEVNULL,  # not the companion's window: keys typed there asked RAD "cancel Bink 2?", and 'q' quits FFmpeg
             stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
             stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
             text=text,

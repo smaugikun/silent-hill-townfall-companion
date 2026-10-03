@@ -115,6 +115,14 @@ class ConvertTest(unittest.TestCase):
         self.assertIn("1 failed; run this again to retry them: Bink/Broken.mp4", run.stderr)
         self.assertEqual([p.name for p in self.out.rglob("*.part.mp4")], [])  # nothing half-made left
 
+    def test_a_converter_cannot_read_what_is_typed_in_the_window(self):
+        # Typing in the companion's window made RAD ask "cancel Bink 2?" (and 'q' quits FFmpeg): children get no input.
+        code = (f"import sys; sys.path.insert(0, {str(CONVERTER.parent)!r}); import convert_videos as c; "
+                "r = c._children.run([sys.executable, '-c', 'import sys; print(repr(sys.stdin.read()))'], "
+                "capture_output=True, text=True); print(r.stdout.strip())")
+        run = subprocess.run([sys.executable, "-c", code], input="typed keys", capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.stdout.strip(), "''", run.stderr)  # it would be 'typed keys' if the child shared our input
+
     def test_missing_tools_are_named_with_where_to_get_them(self):
         settings = self.root / "no-tools.ini"
         settings.write_text("[paths]\nradvideo = nowhere\\radvideo64.exe\nffmpeg = nowhere\\ffmpeg.exe\n"
