@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# Made on each PC, never committed or shipped: the settings, what is made from the game, downloaded tools.
+TownfallCompanion/companion.ini
+TownfallCompanion/cache/
+TownfallCompanion/tools/
+
+# The release archive (tools/build-package.py).
+dist/
