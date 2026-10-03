@@ -10,9 +10,6 @@ local controller = CreateInvalidObject()
 local pawn = CreateInvalidObject() -- gameplay pawn only; invalid in menus and while loading
 local defaultPawnClass = CreateInvalidObject()
 local pawnName
--- Some Townfall controller instances expose ControlRotation.Yaw through UE4SS but return nil for Pitch.
--- Keep the last camera pitch we could read or apply so phone tilt can still accumulate normally.
-local fallbackPitch = 0
 
 -- Splash and main menu spawn an engine DefaultPawn at the origin; only gameplay pawns count.
 local function isMenuPawn(p)
@@ -50,31 +47,21 @@ end
 -- How far up the camera looks, in degrees (down negative). Unreal keeps it in 0..360: 350 is 10 down.
 function M.pitch()
     local pitch = common.tryNumber(function() return controller:GetControlRotation().Pitch end)
-    if pitch ~= nil then
-        fallbackPitch = (pitch + 180) % 360 - 180
-    end
-    return fallbackPitch
+    return pitch and ((pitch + 180) % 360 - 180) or 0
 end
 
--- Turns the player by `degrees` (clockwise) and looks up by `up` degrees (down negative; nil or 0 keeps the
--- pitch), the camera kept within PITCH_LIMIT of level. Logs when the game doesn't take the new yaw, e.g.
--- while it holds the camera (the phone's turning seemed to stop after a respawn).
-local PITCH_LIMIT = 80
+-- Turns the player by `degrees` (clockwise). Vertical phone movement is sent through Townfall's normal
+-- look input path instead of forcing ControlRotation.Pitch: the game's camera layer can override a directly
+-- assigned pitch, while AddControllerPitchInput is the same Unreal path used for local look-up/down input.
 function M.turn(degrees, up)
     local rotation = controller:GetControlRotation()
     local yaw = rotation.Yaw + degrees
-    -- Some Townfall PlayerController instances expose Yaw but return nil for Pitch/Roll through UE4SS.
-    -- Do not let phone tilt break yaw steering: use the last telemetry-safe camera pitch when available,
-    -- otherwise keep level. (A missing Roll is harmless; Townfall's camera does not use it here.)
-    local pitch = common.tryNumber(function() return rotation.Pitch end)
-    if pitch ~= nil then
-        fallbackPitch = (pitch + 180) % 360 - 180
-    end
-    if up and up ~= 0 then
-        fallbackPitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, fallbackPitch + up))
-    end
-    controller:SetControlRotation({ Pitch = fallbackPitch, Yaw = yaw,
+    controller:SetControlRotation({ Pitch = common.tryNumber(function() return rotation.Pitch end) or 0,
+                                    Yaw = yaw,
                                     Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
+    if up and up ~= 0 then
+        pawn:AddControllerPitchInput(up)
+    end
     local now = controller:GetControlRotation().Yaw
     if angleDelta(now, yaw) > 1 then
         logChange("turn check", "TF-PLAYER", string.format("turn by %.1f didn't take: yaw %.1f, wanted %.1f",
