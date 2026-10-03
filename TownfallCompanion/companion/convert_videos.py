@@ -6,7 +6,7 @@ to SOURCES and to the mod's path patterns (CRTV_VIDEO in tf_common.lua, tf_cutsc
 
 The game's videos are Bink 2, and the only decoder that gets them right is RAD's own (FFmpeg with the
 open Bink 2 patch repeats every third frame): RAD Video Tools' radvideo64.exe decodes each into a
-MP4 directly, and FFmpeg only remuxes it for browser playback / adds an external soundtrack when needed. A video without sound of its own gets the
+MP4 directly, then FFmpeg makes a small phone copy (maximum 640x480, H.264) and adds an external soundtrack when needed. A video without sound of its own gets the
 soundtrack the game plays alongside it, from BinkAudio.bank (vgmstream). The game's own MP4s are copied.
 Everything goes to TownfallCompanion\\cache\\clips, which the bridge serves at /clips/: made from the
 user's own game, never shipped.
@@ -81,11 +81,11 @@ def decode_bink(radvideo, bk2, mp4):
 
 
 def convert(source, mp4, tools, soundtracks, bank, preset=None):
-    """Makes MP4 from the game's video without an uncompressed intermediate.
+    """Makes a small browser MP4 from the game's video without an uncompressed intermediate.
 
-    Bink 2 goes straight through RAD to MP4. FFmpeg then only remuxes MP4 -> MP4 (video copied, not
-    re-encoded) so the file is browser-friendly with +faststart, and adds the game's external soundtrack
-    when the Bink itself is silent. The game's own MP4s take the same remux path only when necessary.
+    Bink 2 goes straight through RAD to a temporary MP4. FFmpeg then makes the phone copy: at most
+    640x480 while preserving aspect ratio, H.264 CRF 28 / veryfast / yuv420p, AAC 96k, +faststart.
+    The game's own MP4s are still copied unchanged when they need no separate soundtrack.
     """
     mp4.parent.mkdir(parents=True, exist_ok=True)
     part = mp4.with_name(mp4.stem + ".part.mp4")
@@ -105,10 +105,13 @@ def convert(source, mp4, tools, soundtracks, bank, preset=None):
             if not bink and not sound:
                 shutil.copyfile(source, part)
             else:
+                video_args = (["-vf", "scale=640:480:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                               "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p"]
+                              if bink else ["-c:v", "copy"])
                 run([tools["ffmpeg"], "-hide_banner", "-loglevel", "error", "-y", "-i", video,
                      *(["-i", sound, "-map", "0:v", "-map", "1:a"] if sound else
                        ["-map", "0:v", "-map", "0:a?"]),
-                     "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", part])
+                     *video_args, "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", part])
         part.replace(mp4)
     finally:
         part.unlink(missing_ok=True)
@@ -186,7 +189,7 @@ class GameVideos:
                 return out
             print(f"Game video: converting {key} the first time it is needed ...", flush=True)
             try:
-                # RAD writes MP4 directly; FFmpeg only remuxes/copies that MP4 and optionally adds audio.
+                # RAD writes MP4 directly; FFmpeg makes the small 640x480-max phone copy and adds audio.
                 convert(source, out, self.tools, self._soundtrack_map(), self.bank)
             except Failed as exc:
                 self.problem = f"{key}: {exc}"
