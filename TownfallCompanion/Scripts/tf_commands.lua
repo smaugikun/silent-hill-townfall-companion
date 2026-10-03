@@ -80,20 +80,17 @@ function M.poll()
         end
     end
 
-    -- The phone sends its own heading and tilt; the player turns and looks up or down by as much as the
-    -- phone did since the ones before. So the mouse or stick turns the player too, and a respawn facing
-    -- elsewhere doesn't matter.
+    -- The phone sends its heading; the player turns by as much as the phone did since the one before.
+    -- Phone tilt remains a scanner-view effect and does not take over Townfall's vertical camera.
     local steer, seq = fresh(channels.steer)
     local heading = steer and number(steer, "yaw")
-    local pitch = steer and number(steer, "pitch")
     if heading and not tooOld(seq, STEER_MAX_AGE) then
         local last = channels.steer.last
         if last and seq - last.seq <= STEER_GAP_MS then
-            local up = (pitch and last.pitch) and pitch - last.pitch or 0
-            player.turn((heading - last.heading + 180) % 360 - 180, up)
+            player.turn((heading - last.heading + 180) % 360 - 180)
             common.logChange("steer", "TF-PLAYER", "turned by the phone")
         end
-        channels.steer.last = { heading = heading, pitch = pitch, seq = seq }
+        channels.steer.last = { heading = heading, seq = seq }
     end
 
     local confirm, confirmSeq = fresh(channels.confirm)
