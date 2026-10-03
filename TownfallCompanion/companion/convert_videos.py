@@ -219,7 +219,7 @@ def decode_soundtrack(vgmstream, bank, number, out, low_priority=False):
     return result.returncode == 0 and Path(out).is_file()
 
 
-def convert(source, mp4, tools, soundtracks, bank, preset=None, background=False):
+def convert(source, mp4, tools, soundtracks, bank, background=False):
     """Makes a small browser MP4 from the game's video.
 
     Bink 2 uses RAD's reliable Bink-to-AVI conversion internally. FFmpeg immediately turns that temporary
@@ -262,7 +262,7 @@ def convert(source, mp4, tools, soundtracks, bank, preset=None, background=False
 class GameVideos:
     """Townfall's videos for the phone, automatically cached from the user's game.
 
-    When real game telemetry becomes live, start_precache() converts all missing clips in one background
+    At companion startup, start_precache() converts all missing clips in one background
     worker. If the phone reaches a clip before that worker does, mp4() converts that clip immediately as a
     request-time fallback. Existing MP4s are always usable even if the game or tools are unavailable.
     Per-file locks and atomic renames keep concurrent requests from ever seeing a half-written MP4.
