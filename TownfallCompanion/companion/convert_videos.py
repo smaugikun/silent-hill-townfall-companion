@@ -118,11 +118,12 @@ def convert(source, mp4, tools, soundtracks, bank, preset=None):
 
 
 class GameVideos:
-    """Townfall's videos for the phone, converted from the user's game only when requested.
+    """Townfall's videos for the phone, automatically cached from the user's game.
 
-    Existing MP4s in cache_dir are always usable, even if the game or conversion tools are unavailable.
-    A missing clip is looked up in the game's Movies folders, converted under a per-file lock, then atomically
-    renamed into the cache. Concurrent browser range requests therefore never see a half-written MP4.
+    When real game telemetry becomes live, start_precache() converts all missing clips in one background
+    worker. If the phone reaches a clip before that worker does, mp4() converts that clip immediately as a
+    request-time fallback. Existing MP4s are always usable even if the game or tools are unavailable.
+    Per-file locks and atomic renames keep concurrent requests from ever seeing a half-written MP4.
     """
 
     def __init__(self, game_dir, radvideo, ffmpeg, vgmstream, cache_dir):
@@ -140,6 +141,8 @@ class GameVideos:
         self._soundtracks = None
         self._soundtracks_lock = threading.Lock()
         self._locks, self._locks_lock = {}, threading.Lock()
+        self._precache_started = False
+        self._precache_lock = threading.Lock()
 
         if not self.game_dir:
             self.problem = config.NO_GAME
@@ -164,7 +167,37 @@ class GameVideos:
                     self._soundtracks = list_streams(self.tools["vgmstream"], self.bank) if self.bank.is_file() else {}
         return self._soundtracks
 
-    def mp4(self, relative):
+    def start_precache(self):
+        """Once per companion run, begin filling every missing phone-video cache entry in the background."""
+        with self._precache_lock:
+            if self._precache_started:
+                return
+            self._precache_started = True
+
+        if not self.index:
+            return
+        missing = self.missing_tools()
+        if missing:
+            self.problem = "missing " + "; ".join(missing)
+            print("Game videos: automatic pre-cache can't start: " + self.problem, flush=True)
+            return
+
+        todo = [key for key in sorted(self.index) if not (self.cache_dir / Path(key)).is_file()]
+        if not todo:
+            print(f"Game videos: all {len(self.index)} already cached.", flush=True)
+            return
+        print(f"Game videos: game started; pre-caching {len(todo)} missing clip(s) in the background ...", flush=True)
+        threading.Thread(target=self._precache, args=(todo,), daemon=True, name="townfall-video-precache").start()
+
+    def _precache(self, keys):
+        ready = 0
+        for number, key in enumerate(keys, 1):
+            if self.mp4(key, background=True):
+                ready += 1
+            print(f"Game videos: pre-cache {number}/{len(keys)} ({ready} ready)", flush=True)
+        print(f"Game videos: background pre-cache finished; {ready}/{len(keys)} new clip(s) ready.", flush=True)
+
+    def mp4(self, relative, background=False):
         """Cached/converted MP4 for a /clips/ relative path, or None when it cannot be provided."""
         relative = Path(str(relative).replace("\\", "/"))
         if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() != ".mp4":
@@ -187,7 +220,8 @@ class GameVideos:
         with self._lock(out):
             if out.is_file():
                 return out
-            print(f"Game video: converting {key} the first time it is needed ...", flush=True)
+            action = "pre-caching" if background else "converting on request"
+            print(f"Game video: {action} {key} ...", flush=True)
             try:
                 # RAD writes MP4 directly; FFmpeg makes the small 640x480-max phone copy and adds audio.
                 convert(source, out, self.tools, self._soundtrack_map(), self.bank)
