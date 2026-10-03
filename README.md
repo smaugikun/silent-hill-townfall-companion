@@ -33,7 +33,7 @@ game, on your PC, and streams them to the phone over your home network:
   FMOD sound banks with vgmstream the first time the phone needs them, and kept in
   `TownfallCompanion\cache\sounds`.
 - **Videos** (optional): when the phone first needs one, the companion automatically converts that Bink video
-  to MP4 (RAD Video Tools decodes it, FFmpeg encodes it) and keeps it in `TownfallCompanion\cache\clips`.
+  directly to MP4 with RAD Video Tools; FFmpeg only remuxes it for browser playback and adds the game's separate soundtrack when needed and keeps it in `TownfallCompanion\cache\clips`.
   The first play of a new clip can take a moment; after that it streams immediately from the cache.
   `Convert Game Videos.bat` is still there only if you want to fill the cache in advance. Without the video
   tools, the phone shows static, or its own drawn picture for a monster, where the CRTV plays a video, and the
