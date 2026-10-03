@@ -549,6 +549,7 @@ def main():
     parser.add_argument("--sound-cache", type=Path, default=config.SOUNDS_DIR,
                         help="where the game's sounds are kept once decoded")
     args = parser.parse_args()
+    console_changed = config.disable_ue4ss_console()
     settings = config.load(args.settings)
     host = args.host or settings.listen
     game_dir = args.game_dir or settings.game or config.find_game_dir()
@@ -568,6 +569,8 @@ def main():
         demo_on.set()
         update_live()
     print(f"Townfall Companion {config.VERSION}")
+    if console_changed:
+        print("UE4SS console: disabled for the next Townfall launch (UE4SS.log still works)")
     print(f"Settings:     {settings.file}")
     print(f"Game:         {game_dir or 'not found (set game in the settings)'}")
     if game_dir:
