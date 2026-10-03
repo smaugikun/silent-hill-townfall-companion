@@ -108,6 +108,10 @@ Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
 Game videos: pre-cache 1/18 (1 ready)
 ```
 
+The automatic background pass skips obvious developer/test Bink assets because some of those files are not
+convertible by RAD and can show a Windows error dialog. They remain indexed and can still be attempted on demand if
+Townfall actually requests one.
+
 If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
 `TownfallCompanion\tools\` (FFmpeg can also be installed with
 `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional pre-launch
