@@ -506,6 +506,23 @@ class ConfigTest(unittest.TestCase):
         settings.write_text("[bridge]\nport = 8795 ; mine, 8790 was taken\n", encoding="utf-8")
         self.assertEqual(self.config.load(settings).port, 8795)
 
+    def test_the_ue4ss_consoles_are_switched_off_and_the_rest_of_the_file_is_kept(self):
+        ini = self.root / "UE4SS-settings.ini"
+        ini.write_bytes(b"[Debug]\r\nConsoleEnabled = 1 ; old\r\nGuiConsoleEnabled=1\r\nGuiConsoleVisible = 1\r\n"
+                        b"[Other]\r\nFoo = 1\r\n")
+        self.assertTrue(self.config.disable_ue4ss_console(ini))
+        self.assertEqual(ini.read_bytes(), b"[Debug]\r\nConsoleEnabled = 0 ; old\r\nGuiConsoleEnabled=0\r\n"
+                                           b"GuiConsoleVisible = 0\r\n[Other]\r\nFoo = 1\r\n")
+        self.assertFalse(self.config.disable_ue4ss_console(ini))  # already off: untouched
+
+    def test_missing_ue4ss_console_keys_are_added_to_debug(self):
+        ini = self.root / "UE4SS-settings.ini"
+        ini.write_bytes(b"[Debug]\nFoo = 1")
+        self.assertTrue(self.config.disable_ue4ss_console(ini))
+        text = ini.read_text()
+        self.assertTrue(all(f"{key} = 0" in text for key in self.config.CONSOLE_KEYS))
+        self.assertIsNone(self.config.disable_ue4ss_console(self.root / "missing.ini"))
+
 
 if __name__ == "__main__":
     unittest.main()

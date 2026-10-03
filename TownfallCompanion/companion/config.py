@@ -104,36 +104,42 @@ def _path(value):
     return path if path.is_absolute() else MOD_DIR / path
 
 
-def disable_ue4ss_console():
-    """Hide UE4SS's separate Windows debug console while keeping UE4SS.log and the in-game console mod intact.
+# UE4SS's [Debug] keys that open its console windows: the old text console and the GUI one.
+CONSOLE_KEYS = ("ConsoleEnabled", "GuiConsoleEnabled", "GuiConsoleVisible")
+
+
+def disable_ue4ss_console(path=None):
+    """Hide UE4SS's debug console windows while keeping UE4SS.log and the in-game console mod intact.
 
     Townfall Companion is installed at ue4ss\\Mods\\TownfallCompanion, so the shared UE4SS settings file
-    is two folders above MOD_DIR. Preserve the rest of that file verbatim.
+    is two folders above MOD_DIR. The rest of that file is kept byte for byte. Returns True if it changed
+    the file, False if the consoles were already off, None if there is no file or it can't be written.
     """
-    path = UE4SS_SETTINGS_FILE
-    if not path.is_file():
-        return None
+    path = Path(path or UE4SS_SETTINGS_FILE)
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        pattern = re.compile(r"(?im)^(\s*ConsoleEnabled\s*=\s*)[^;\r\n]*(.*)$")
-        if pattern.search(text):
-            changed = pattern.sub(lambda m: m.group(1) + "0" + m.group(2), text, count=1)
-        else:
-            section = re.search(r"(?im)^\s*\[Debug\]\s*(?:[;#].*)?$", text)
-            newline = "\r\n" if "\r\n" in text else "\n"
+        raw = path.read_bytes()
+        text = raw.decode("utf-8", errors="surrogateescape")
+        newline = "\r\n" if "\r\n" in text else "\n"
+        changed = text
+        for key in CONSOLE_KEYS:
+            pattern = re.compile(rf"(?im)^([ \t]*{key}[ \t]*=[ \t]*)[^;#\r\n]*?([ \t]*(?:[;#][^\r\n]*)?)(?=\r?$)", re.M)
+            if pattern.search(changed):
+                changed = pattern.sub(lambda m: m.group(1) + "0" + m.group(2), changed)
+                continue
+            section = re.search(r"(?im)^[ \t]*\[Debug\][ \t]*(?:[;#][^\r\n]*)?\r?$", changed)
+            line = f"{key} = 0{newline}"
             if section:
-                end = text.find("\n", section.end())
-                if end < 0:
-                    end = len(text)
-                else:
-                    end += 1
-                changed = text[:end] + "ConsoleEnabled = 0" + newline + text[end:]
+                end = changed.find("\n", section.end())
+                end = len(changed) if end < 0 else end + 1
+                if end == len(changed) and not changed.endswith("\n"):
+                    line = newline + line
+                changed = changed[:end] + line + changed[end:]
             else:
-                changed = text.rstrip() + newline * 2 + "[Debug]" + newline + "ConsoleEnabled = 0" + newline
-        if changed != text:
-            path.write_text(changed, encoding="utf-8")
-            return True
-        return False
+                changed = changed.rstrip() + newline * 2 + "[Debug]" + newline + line
+        if changed == text:
+            return False
+        path.write_bytes(changed.encode("utf-8", errors="surrogateescape"))
+        return True
     except OSError:
         return None
 
