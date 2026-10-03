@@ -1,7 +1,7 @@
 @echo off
-rem OPTIONAL PRE-CACHE: the companion already converts each game video automatically the first time
-rem the phone needs it. Run this only if you want to prepare every video in advance so first playback
-rem starts immediately. Needs RAD Video Tools, FFmpeg and vgmstream in the tools folder.
+rem OPTIONAL PRE-CACHE: the companion already starts caching missing videos automatically when the
+rem game starts. Run this only if you want to prepare every video before launching the game, so no
+rem conversion needs to run during play. Needs RAD Video Tools, FFmpeg and vgmstream in the tools folder.
 title Townfall Companion - optional video pre-cache
 call "%~dp0companion\run.bat" convert_videos.py %*
 echo.
