@@ -359,7 +359,6 @@ function goFullScreen() {
 const GAME_SOUND_REQUEST_MS = 2000;
 let gameSoundAsked = false;
 let talkingNow = null; // the waypoint's line the phone says now
-let crtvUpNow = false; // the game's CRTV is up (a waypoint's line may start any moment)
 let crtvVideoNow = false; // the phone plays the game's CRTV screen video out loud (its converted copy)
 
 // Whether the phone plays the CRTV's sound, talking included: in VIEW unless switched off, in AV OUT
@@ -372,12 +371,11 @@ const phonePlays = () => control.selector === "VIEW" && sound.inView; // AV OUT:
 function requestGameSound() {
   const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundReady() && bridgeOnline
     && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
-  // A waypoint's line is asked for before it starts, while the game's CRTV is up: the
-  // game's copy goes quiet in the same moment, not a round trip after, which let its first words out.
-  const linesComing = Boolean(state.crtv?.active);
+  // While the phone plays the sound, a waypoint's line is asked for before it starts: the game begins it
+  // about half a second before its CRTV is up, and its copy goes quiet in the same moment, not a round
+  // trip after, which let its first words out. Lines come only out of the CRTV, which VIEW keeps on.
   if (quiet || gameSoundAsked) {
-    postControl({type: "audio", muteGame: quiet, dialogue: quiet && (talkingNow != null || linesComing),
-      video: quiet && crtvVideoNow});
+    postControl({type: "audio", muteGame: quiet, dialogue: quiet, video: quiet && crtvVideoNow});
   }
   gameSoundAsked = quiet;
 }
@@ -626,9 +624,6 @@ function render(now) {
   const said = shown ? spokenLine(state.signals) : null;
   const line = updateLine(said && {...said, at: sampledAt}, playing, holdMedia);
   if (line !== talkingNow) { talkingNow = line; requestGameSound(); }
-  // The game's CRTV coming up (or going down) changes what is asked of the game at once, not 2 s later.
-  const crtvUp = Boolean(state.crtv?.active);
-  if (crtvUp !== crtvUpNow) { crtvUpNow = crtvUp; requestGameSound(); }
   updateSound({
     playing: playing && !holdMedia, // the talking holds by itself: its time stands still too
     game: view.source === "game",
