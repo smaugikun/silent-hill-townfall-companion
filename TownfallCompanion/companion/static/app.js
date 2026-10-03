@@ -3,7 +3,7 @@ import { $, createGameClock, deviceHeading, devicePitch, norm180, norm360, clamp
 import { SIGNAL_RANGE, drawFineTune, drawScreen } from "./screen.js";
 import { control, letGo, onControlChange, onTelemetry, phoneShows, scannerView, setAvOut, setPutDown,
   setRaises, setSelector, setSteering, steers } from "./scanner.js";
-import { listenMotion, onPickup, onPutDown, pickup, setAutoPickup, setStandAvOut } from "./pickup.js";
+import { listenMotion, onPickup, onPutDown, pickup, setAutoPickup, setStandAvOut, wakeSteering } from "./pickup.js";
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
 import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateDialogue,
@@ -170,13 +170,19 @@ function orientationHandler(e) {
   const h = typeof e.alpha === "number" && typeof e.beta === "number" && typeof e.gamma === "number"
     ? deviceHeading(e.alpha, e.beta, e.gamma) : e.webkitCompassHeading;
   if (typeof h !== "number" || !Number.isFinite(h)) return;
+
+  const now = performance.now();
+  let moved = 0;
   if (typeof e.beta === "number" && typeof e.gamma === "number") {
     const pitch = devicePitch(e.beta, e.gamma);
-    if (sensorPitch != null && Math.abs(pitch - sensorPitch) > 0.5) phoneMovedAt = performance.now();
+    if (sensorPitch != null) moved = Math.max(moved, Math.abs(pitch - sensorPitch));
     sensorPitch = pitch;
     phonePitch ??= sensorPitch;
   }
-  if (sensorHeading != null && Math.abs(norm180(h - sensorHeading)) > 0.5) phoneMovedAt = performance.now();
+  if (sensorHeading != null) moved = Math.max(moved, Math.abs(norm180(h - sensorHeading)));
+  if (moved > 0.5) phoneMovedAt = now;
+  if (moved >= 1.0) wakeSteering();
+
   sensorHeading = h;
   if (phoneHeading == null) phoneHeading = h;
   sensorState = "on";
@@ -191,9 +197,8 @@ function smoothHeading(now) {
   if (sensorPitch != null && phonePitch != null) phonePitch += k * (sensorPitch - phonePitch);
 }
 
-// Steering (VIEW, "The phone steers your character", in hand): the player turns and looks up and
-// down with the phone, and also with the mouse, and faces somewhere new after a respawn. Whenever the phone
-// is held still, the scanner settles on where the game says the player looks (not while it moves: the
+// While steering, yaw follows the phone. The phone's tilt still controls only the scanner picture.
+// Held still, the scanner settles on where the game says the player looks (not while it moves: the
 // game's heading arrives a moment late then).
 const SETTLE_AFTER_MS = 300;
 const SETTLE_GAIN = 0.25;
@@ -285,11 +290,10 @@ function scannerPitch() {
   return (steers() ? reference.worldPitch : pitch) + phonePitch - reference.phonePitch;
 }
 
-// Steering (VIEW, "The phone steers your character", in hand): the player turns and looks up and
-// down by as much as the phone does. The phone sends its own heading and tilt and the mod turns the player
-// by the difference to the ones before (so it adds to the mouse). Held still, they go once a second anyway,
-// or the mod would take the next move as a new starting point. Put down, it stops; picked up again after
-// more than 2 s, the mod starts afresh.
+// Steering (VIEW, "The phone steers your character", in hand): yaw follows the phone by the difference
+// from the previous heading (so mouse/controller turning still adds normally). Held still, a keepalive goes
+// once a second so the next move remains continuous. Four seconds still rests steering; either the motion
+// sensor or the orientation sensor wakes it as soon as the phone moves again.
 const STEER_MS = 60;
 const STEER_KEEPALIVE_MS = 1000;
 let lastSteer = {at: 0, heading: null};
