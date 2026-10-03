@@ -108,16 +108,16 @@ Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
 Game videos: pre-cache 1/18 (1 ready)
 ```
 
-Some Townfall Binks make RAD report a non-zero exit after it has already written the MP4. The companion treats
-a non-empty output as usable and lets FFmpeg validate it; it only reports a conversion failure when RAD produces
-no output (or FFmpeg cannot read/process what RAD wrote).
+The automatic converter uses RAD's Bink-to-AVI path internally, because that is the reliable path for
+Townfall's clips. FFmpeg immediately compresses the temporary AVI into the cached phone MP4, then the AVI
+is deleted. RAD and FFmpeg run in the background; closing the companion stops an active conversion, and
+the next start continues with whatever clips are still missing.
 
 If automatic conversion says a tool is missing, put RAD Video Tools, FFmpeg and vgmstream in
 `TownfallCompanion\tools\` (FFmpeg can also be installed with
-`winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is only an optional pre-launch
-pre-cache step if you want every clip ready before starting Townfall, so no conversion work runs during play.
-If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips. Without the videos everything
-else works.
+`winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
+shortcut if you want every clip ready before starting Townfall, so no conversion work runs during play.
+If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips.
 
 ## UE4SS and the game
 
