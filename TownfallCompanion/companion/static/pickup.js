@@ -51,6 +51,14 @@ const listeners = [];
 // reading, which only tells how it lies.
 export function onPickup(fn) { listeners.push(fn); }
 
+// Where Auto pickup puts the selector for what onPickup tells ("VIEW" or "AV_OUT"). Picked up, or taken off a
+// stand, is VIEW; set on a stand goes where the Stand setting says; laid flat is AV OUT. (Taking it off a stand
+// followed the Stand setting too, so with "AV OUT" chosen it never went back to VIEW.)
+export function pickupPosition(held, stand, standAvOut) {
+  if (held) return "VIEW";
+  return stand && !standAvOut ? "VIEW" : "AV_OUT";
+}
+
 const putDownListeners = [];
 // fn(down): put down (laid flat, or resting) or taken in hand again.
 export function onPutDown(fn) { putDownListeners.push(fn); }

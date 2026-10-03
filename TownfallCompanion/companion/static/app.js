@@ -3,7 +3,7 @@ import { $, createGameClock, deviceHeading, devicePitch, norm180, norm360, clamp
 import { SIGNAL_RANGE, drawFineTune, drawScreen } from "./screen.js";
 import { control, letGo, onControlChange, onTelemetry, phoneShows, scannerView, setAvOut, setPutDown,
   setRaises, setSelector, setSteering, steers } from "./scanner.js";
-import { listenMotion, onPickup, onPutDown, pickup, setAutoPickup, setStandAvOut, wakeSteering } from "./pickup.js";
+import { listenMotion, onPickup, onPutDown, pickup, pickupPosition, setAutoPickup, setStandAvOut, wakeSteering } from "./pickup.js";
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
 import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateDialogue,
@@ -507,12 +507,12 @@ $("setAutoPickup").addEventListener("change", (ev) => { setAutoPickup(ev.target.
 for (const radio of document.querySelectorAll('input[name="standAvOut"]')) {
   radio.addEventListener("change", () => setStandAvOut(radio.value === "avout"));
 }
-// Four seconds still rests steering; stand detection is separate and quicker. With Auto pickup, the
-// stand setting is authoritative in both directions: setting it down on a stand selects VIEW or AV OUT.
+// Four seconds still rests steering; stand detection is separate and quicker. With Auto pickup, setting the
+// phone on a stand selects VIEW or AV OUT as the stand setting says; taking it off, or picking it up, is VIEW.
 onPutDown(setPutDown);
 onPickup((held, first, stand) => {
   if (!pickup.auto || first) return;
-  const position = stand ? (pickup.standAvOut ? "AV_OUT" : "VIEW") : held ? "VIEW" : "AV_OUT";
+  const position = pickupPosition(held, stand, pickup.standAvOut);
   if (control.selector === position) return;
   controlHaptic("lock");
   setSelector(position);

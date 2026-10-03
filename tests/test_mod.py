@@ -843,6 +843,29 @@ class GameSoundTest(ModTest):
         self.assertEqual((self.talking(), self.volumes()), ([1, 1], [0] * 4))
         self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 1)
 
+    def test_a_line_the_phone_took_over_stays_quiet_in_the_game_until_it_ends(self):
+        self.world.speak(self.waypoint, "10c5", 0)
+        self.ask(True, dialogue=True)
+        self.world.tick(1)
+        self.assertEqual(self.talking(), [0, 0])
+        self.ask(True, dialogue=False)  # the phone's copy hiccups, but the game's line is still going
+        self.world.tick(2)
+        self.assertEqual(self.talking(), [0, 0])
+        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 0)
+        self.world.speak(self.waypoint, None)  # the line ends
+        self.world.tick(1)
+        self.assertEqual(self.talking(), [1, 1])
+        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 1)
+
+    def test_the_game_talks_again_at_once_when_the_phone_stops_playing_sound_mid_line(self):
+        self.world.speak(self.waypoint, "10c5", 0)
+        self.ask(True, dialogue=True)
+        self.world.tick(1)
+        self.assertEqual(self.talking(), [0, 0])
+        self.ask(False)  # AV OUT, or switched off: the phone plays nothing, the game must
+        self.world.tick(1)
+        self.assertEqual(self.talking(), [1, 1])
+
     def test_back_on_when_the_phone_stops_asking(self):
         self.ask(True, dialogue=True, video=True)
         for _ in range(7):

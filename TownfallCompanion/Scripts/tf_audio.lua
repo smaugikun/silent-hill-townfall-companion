@@ -83,6 +83,15 @@ local function talkingSources()
     return list
 end
 
+-- Whether any active waypoint is saying a line now, silenced or not (a silenced sound plays on to its end).
+local function waypointSpeaking()
+    for _, sound in ipairs(signals.dialogueComponents()) do
+        local ok, playing = pcall(function() return sound:IsPlaying() end)
+        if ok and playing then return true end
+    end
+    return false
+end
+
 local function setVolume(list, volume)
     local count = 0
     for _, c in ipairs(list) do
@@ -164,7 +173,9 @@ function M.update()
     end
 
     local talking = keep and phoneDialogue
-    if talking then
+    -- A line the phone took over stays quiet in the game until it ends: the phone's request dropping out for a
+    -- moment (its copy catching up, a hiccup) let the game's rest of the line in, and both talked.
+    if talking or (linesOff and keep and waypointSpeaking()) then
         setVolume(talkingSources(), 0)
         if not linesOff then common.log("TF-AUDIO", "waypoint dialogue off in the game, the phone plays it") end
         linesOff = true
