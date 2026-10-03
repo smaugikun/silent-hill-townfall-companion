@@ -1,7 +1,7 @@
 -- Commands from the phone, written by bridge.py as small JSON files in %TEMP%:
 --   townfall-companion-commands.json  {"active":true,"frequency":0.23,"seq":...}  the CRTV, while the phone controls it
 --   townfall-companion-steer.json     {"yaw":132.5,"pitch":-4.0,"seq":...}       the phone's heading and tilt
---   townfall-companion-confirm.json   {"seq":...}                                save / confirm the tuned frequency (F / A)
+--   townfall-companion-confirm.json   {"seq":...}                                the fine-tune press (F / A)
 --   townfall-companion-audio.json     {"muteGame":true,"dialogue":true,"video":true,"seq":...} the game's CRTV
 --                                     sound (and talking, and the screen's video) quiet while the phone plays it
 -- seq is the bridge's clock in ms; a changed seq means a new command.
@@ -96,7 +96,7 @@ function M.poll()
     local confirm, confirmSeq = fresh(channels.confirm)
     if confirm and not tooOld(confirmSeq, CONFIRM_MAX_AGE) then
         crtv.confirmFineTune()
-        common.log("TF-CRTV", "phone pressed F (save / confirm tuned frequency)")
+        common.log("TF-CRTV", "phone pressed F (fine-tune confirm)")
     end
 
     -- Applied at once: the phone asks as a line starts on it, and until the game's goes quiet both talk.
