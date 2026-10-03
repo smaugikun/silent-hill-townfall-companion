@@ -97,14 +97,13 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 
 ### No story videos, only a drawn picture
 
-You do **not** need to run `Convert Game Videos.bat` first. When game telemetry becomes live, the companion
-starts pre-caching all missing videos automatically in one background worker. If the phone requests a clip
+You do **not** need to run `Convert Game Videos.bat` first. As soon as the companion starts, it begins pre-caching all missing videos automatically in one background worker, without waiting for gameplay telemetry or a save to load. If the phone requests a clip
 before the background worker reaches it, that clip converts immediately as a request-time fallback.
 
 The companion window will report the progress, for example:
 
 ```text
-Game videos: game started; pre-caching 18 missing clip(s) in the background ...
+Game videos: pre-caching 18 missing clip(s) in the background ...
 Game video: pre-caching Bink/Shipping/Mov_CRTV_Clinic.mp4 ...
 Game videos: pre-cache 1/18 (1 ready)
 ```
