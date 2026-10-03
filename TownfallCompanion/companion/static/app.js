@@ -297,11 +297,10 @@ function maybeSteer() {
   if (!steers() || paused || !sensorsOn || phoneHeading == null || !state.gameLive) return;
   const now = performance.now();
   if (now - lastSteer.at < STEER_MS) return;
-  const moved = lastSteer.heading == null || Math.abs(norm180(phoneHeading - lastSteer.heading)) >= 0.5
-    || Math.abs((phonePitch ?? 0) - (lastSteer.pitch ?? 0)) >= 0.5;
+  const moved = lastSteer.heading == null || Math.abs(norm180(phoneHeading - lastSteer.heading)) >= 0.5;
   if (!moved && now - lastSteer.at < STEER_KEEPALIVE_MS) return;
   lastSteer = {at: now, heading: phoneHeading, pitch: phonePitch};
-  postControl(phonePitch == null ? {type: "steer", yaw: phoneHeading} : {type: "steer", yaw: phoneHeading, pitch: phonePitch});
+  postControl({type: "steer", yaw: phoneHeading});
 }
 
 // The tuned monster pulses, faster and stronger the closer it is and the better the phone points at it.
@@ -696,6 +695,7 @@ onControlChange((c) => {
   if (steers() !== wasSteering && reference) {
     reference.world = Number(state.player?.yaw ?? 0);
     reference.worldPitch = Number(state.player?.pitch ?? 0);
+    lastSteer = {at: 0, heading: null, pitch: null};
   }
   wasSteering = steers();
   // ⌖ in VIEW, where the phone's direction counts; the hint the first time VIEW starts. Turning needs the
