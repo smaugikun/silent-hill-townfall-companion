@@ -50,9 +50,6 @@ listen = 0.0.0.0
 ; A number (4 to 12 digits) the phone asks for once, so that not everyone on your network can open the page
 ; and send the game commands. A new settings file gets a random one; empty turns it off.
 pin =
-; 1: the game starts the companion by itself (a minimized window in the taskbar), and it closes when the game does.
-; 0: start it yourself with Start Companion.bat. Read by the game's part of the mod, so it applies at the next launch.
-autostart = 1
 
 [paths]
 ; Found by themselves: set one only if the companion says it can't find it.

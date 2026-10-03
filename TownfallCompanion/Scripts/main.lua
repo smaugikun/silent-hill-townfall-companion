@@ -4,9 +4,8 @@
 -- waypoints (tf_signals) and the cutscene playing (tf_cutscene), and writes them to
 -- %TEMP%\townfall-companion-telemetry.json for the companion's bridge (UE4SS Lua has no sockets).
 -- The phone's commands come back through files too (tf_commands); tf_audio quiets the game's CRTV
--- sound while the phone plays it. Two heartbeat files tell the companion and the mod about each other:
--- the mod reads the game only while a phone is open (otherwise it idles), says every second that the game
--- runs (a companion it started closes with the game), and starts the companion once if none is running.
+-- sound while the phone plays it. The companion writes a heartbeat file (how many phones have the page open):
+-- the mod reads the game only while a phone is open, and idles otherwise.
 
 local common = require("tf_common")
 local log, logChange, optional = common.log, common.logChange, common.optional
@@ -29,25 +28,8 @@ local AUDIO_MS = 250   -- silencing the game's CRTV sound again where it restart
 local tempDir = os.getenv("TEMP") or os.getenv("TMP")
 local telemetryPath = tempDir and (tempDir .. "\\townfall-companion-telemetry.json")
 local bridgeBeatPath = tempDir and (tempDir .. "\\townfall-companion-bridge.json")
-local gameBeatPath = tempDir and (tempDir .. "\\townfall-companion-game.json")
 if not telemetryPath then log("TF-COMPANION", "no TEMP directory, telemetry disabled") end
 commands.init(tempDir)
-
--- The folder of the mod (Scripts' parent), found from where this file was loaded from.
--- (UE4SS also puts <mod>\Scripts\?.lua on package.path, the fallback.)
-local modDir = (debug and debug.getinfo and (debug.getinfo(1, "S").source or ""):match("^@(.*)[/\\]Scripts[/\\]main%.lua$"))
-    or package.path:match("([^;]+)[/\\]Scripts[/\\]%?%.lua")
-
--- companion.ini's autostart: on unless it says 0, false, no or off (the file may not exist yet).
-local function autostartWanted()
-    local f = modDir and io.open(modDir .. "\\companion.ini", "r")
-    if not f then return true end
-    local text = f:read("a") or ""
-    f:close()
-    local value = text:match("\n%s*autostart%s*=%s*([^%s;#]+)") or text:match("^%s*autostart%s*=%s*([^%s;#]+)")
-    value = value and value:lower()
-    return not (value == "0" or value == "false" or value == "no" or value == "off")
-end
 
 -- Whether a companion is running and how many phones have the page open, from its heartbeat.
 local bridgeUp, phoneHere = false, false
@@ -62,34 +44,9 @@ local function readBridge()
     return fresh, fresh and phones > 0
 end
 
-local startedAt, triedToStart = os.clock(), false
-local START_AFTER_S = 8 -- long enough for a companion started by hand just before the game to be seen
-
--- Every second: says the game runs, sees whether a companion and a phone are there, and starts the
--- companion once per game if there never was one and autostart is on.
+-- Every second: whether a companion is running and a phone has its page open.
 local function presence()
-    if gameBeatPath then
-        local f = io.open(gameBeatPath, "w")
-        if f then
-            f:write(string.format('{"time":%d}', os.time()))
-            f:close()
-        end
-    end
     bridgeUp, phoneHere = readBridge()
-    if bridgeUp then triedToStart = true end -- one that was here and was closed since is not started again
-    if bridgeUp or triedToStart or os.clock() - startedAt < START_AFTER_S then return end
-    triedToStart = true
-    if not modDir then
-        log("TF-COMPANION", "no companion running, and the mod's folder isn't known: start it with Start Companion.bat")
-        return
-    end
-    if not autostartWanted() then
-        log("TF-COMPANION", "no companion running; autostart is off in companion.ini")
-        return
-    end
-    local ok, err = pcall(os.execute, string.format('start "Townfall Companion" /min "%s\\Start Companion.bat" --with-game', modDir))
-    log("TF-COMPANION", ok and "no companion running: starting it (a minimized window in the taskbar)"
-        or ("could not start the companion: " .. tostring(err)))
 end
 
 local function whenPhone(fn)

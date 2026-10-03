@@ -32,8 +32,7 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
 - **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
   AV OUT when it is laid flat; set on a stand, it goes to AV OUT by default (or stays in VIEW, as chosen).
 - **Pause:** in the game's pause menu, everything on the phone holds too.
-- **One step:** starting the game starts the companion too (a minimized window in the taskbar), and it closes with the
-  game. While no phone has the page open, the mod reads nothing from the game.
+- **Light on the game:** while no phone has the page open, the mod reads nothing from the game.
 - **PIN:** the phone asks once for the number in `companion.ini`, so nobody else on your network can open the
   page and send the game commands.
 - Vibration for the buttons and nearby signals, and settings for every part of it.
@@ -113,18 +112,12 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    the game if you want every clip ready immediately and no background conversion during play.
    `RADTools.7z` is a 7-Zip archive: Windows 11 opens it (right-click → *Extract All*); on Windows 10 use
    [7-Zip](https://www.7-zip.org).
-6. Start the game: the mod starts the companion by itself about eight seconds after it loads, in a minimized
-   window you find in the taskbar. The very first time, it opens a page in your PC's browser with the phone's address
-   and the PIN. Later, open `http://127.0.0.1:8790/info` on the PC (or the taskbar window) to see them again. You can also
-   double-click **`Start Companion.bat`** in `TownfallCompanion` to see that it works before the game runs; it
-   shows the same window and stays open until you close it (a companion started this way doesn't close with
-   the game). Each time it starts it also switches off UE4SS's
+6. Double-click **`Start Companion.bat`** in `TownfallCompanion`. Each time it starts it also switches off UE4SS's
    debug console windows (`ConsoleEnabled`, `GuiConsoleEnabled` and `GuiConsoleVisible` in
    `ue4ss\UE4SS-settings.ini`), which takes effect at the next Townfall launch; `UE4SS.log` still works normally.
    To get a console back for debugging, set those three to `1` again after starting the companion. The first time,
    Windows asks whether Python may use the network: allow it on **private networks**. The window shows the address for the phone, e.g.
-   `On the phone: http://192.168.1.50:8790`, and `PIN: 123456`. Closing the window stops the companion. To start
-   it yourself every time instead, set `autostart = 0` in `companion.ini`.
+   `On the phone: http://192.168.1.50:8790`, and `PIN: 123456`. Keep the window open; closing it stops the companion.
 
 ## Setup on the phone
 
@@ -132,8 +125,9 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
 2. Open **Chrome** (Android) or **Safari** (iPhone) and enter the address from the companion's window, with the
    port, e.g. `http://192.168.1.50:8790`. Bookmark it: it stays the same as long as the PC keeps its network
    address.
-3. Enter the **PIN** (shown on that first page and at `http://127.0.0.1:8790/info` on the PC; it is also `pin` in
-   `companion.ini`); the phone remembers it. A browser on the PC itself never asks for it.
+3. Enter the **PIN** the companion's window shows (it is also `pin` in `companion.ini`, and at
+   `http://127.0.0.1:8790/info` in a browser on the PC); the phone remembers it. A browser on the PC itself never
+   asks for it.
    Five wrong tries lock that phone out for a minute.
 4. Tap the screen once. Browsers play sound and vibrate only after a tap.
 5. *Android, recommended, once:* in Chrome, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
@@ -146,9 +140,9 @@ vibrate from a web page. Details, and the Windows firewall settings: [Phone setu
 
 ## Every time you play
 
-1. Start the game. The companion starts with it (a minimized window in the taskbar).
-2. On the phone, open the bookmarked address (the PIN once, then it remembers) and tap the screen once. The
-   phone shows WAITING FOR GAME until you're in gameplay.
+1. Double-click **`Start Companion.bat`** and keep its window open. It can start before or after the game.
+2. On the phone, open the bookmarked address (the PIN once, then it remembers) and tap the screen once.
+3. Start the game. The phone shows WAITING FOR GAME until you're in gameplay.
 
 The PIN keeps others on your network out of the page, but it is not encryption: use the companion only on your
 home network. Set `pin =` empty in `companion.ini` to turn it off, or another number of 4 to 12 digits. A
@@ -170,11 +164,8 @@ mod made too (the companion deletes its small files in the Windows temp folder w
 
 - **The phone can't open the page:** same Wi-Fi? Python allowed through the Windows firewall on private
   networks? Your Wi-Fi set to *Private* in Windows? Use the address the window shows, not `127.0.0.1`.
-- **The companion didn't start with the game:** is `autostart` in `companion.ini` not `0`? Is Python installed and
-  on the PATH? Look at `UE4SS.log` for `[TF-COMPANION] no companion running`. Start `Start Companion.bat` yourself to
-  see its error.
 - **"Already running":** a companion is open already (check the taskbar); use that one, or close it first.
-- **PIN forgotten:** open `http://127.0.0.1:8790/info` in a browser on the PC, or look at `pin` in `companion.ini`.
+- **PIN forgotten:** it is in the companion's window, at `http://127.0.0.1:8790/info` in a browser on the PC, and as `pin` in `companion.ini`.
 - **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has
   `[TF-COMPANION] Townfall Companion loaded`.
 - **No sound:** tap the phone once, keep its screen on, and check the companion's window for "Game sounds

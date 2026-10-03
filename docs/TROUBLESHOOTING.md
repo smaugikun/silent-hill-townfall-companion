@@ -29,15 +29,6 @@ Not an error: open the new address it shows on the phone (and enter it in the Ch
 Often the other program is a companion window still open from before. For a fixed address, set a port in
 `companion.ini` (below).
 
-### The companion doesn't start with the game
-
-The mod starts it about eight seconds after it loads, once per game, if none is running. It doesn't if
-`autostart = 0` is in `companion.ini`, or if you closed a companion that was running (it isn't started again
-until the next game launch). `UE4SS.log` says which: `[TF-COMPANION] no companion running: starting it`, or
-`autostart is off`. If it says it started but nothing appears, double-click `Start Companion.bat` to see the error
-(usually Python missing). A companion the game started closes by itself about a minute and a half after the game
-closes.
-
 ### "Townfall Companion is already running"
 
 Another companion window is open (look in the taskbar, it may be minimized): use that one, or close it first.
@@ -45,8 +36,8 @@ If it isn't there, wait ten seconds after closing one; it checks for a companion
 
 ### The phone asks for a PIN, or says "Wrong PIN"
 
-The PIN is shown at `http://127.0.0.1:8790/info` in a browser on the PC (with the phone's address), and is `pin` in
-`TownfallCompanion\companion.ini`. Five wrong tries
+The PIN is in the companion's window, at `http://127.0.0.1:8790/info` in a browser on the PC (with the phone's
+address), and is `pin` in `TownfallCompanion\companion.ini`. Five wrong tries
 lock that phone out for a minute. Set `pin =` empty to turn it off, or put another number of 4 to 12 digits;
 restart the companion for it to apply. A phone that has the old PIN is asked again.
 
@@ -59,7 +50,6 @@ changing:
   changes, or when the window says all ports are taken.
 - `listen`: `0.0.0.0` lets the phone connect; `127.0.0.1` allows only this PC.
 - `pin`: the number the phone asks for once (a new settings file gets a random one; empty: none).
-- `autostart`: `1` lets the game start the companion, `0` leaves that to `Start Companion.bat`.
 - `game`: the folder that contains `Townfall\Content`, e.g. `game = D:\SteamLibrary\steamapps\common\Townfall`.
   Only needed when the window says **"Townfall not found"**, **"the game's sound banks not found"** or
   **"The game's videos aren't in …"**.

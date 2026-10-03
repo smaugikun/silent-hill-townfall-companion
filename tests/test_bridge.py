@@ -72,7 +72,7 @@ class BridgeTest(unittest.TestCase):
              "--game-dir", str(root / "Townfall-install"), "--sound-cache", str(root / "sound-cache"),
              "--vgmstream", str(vgmstream if cls.vgmstream else root / "missing" / "vgmstream-cli.exe"),
              "--radvideo", str(radvideo), "--ffmpeg", str(ffmpeg),
-             "--settings", str(root / "companion.ini"), "--pin", "", "--no-browser", *cls.extra_args],  # no PIN unless a test asks
+             "--settings", str(root / "companion.ini"), "--pin", "", *cls.extra_args],  # no PIN unless a test asks
             # Not into a pipe: the bridge logs every request, and a pipe nobody reads fills up and blocks it.
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(50):
@@ -412,7 +412,7 @@ class StartupTest(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, "-u", str(bridge), "--host", "127.0.0.1",
              "--telemetry-file", str(self.root / f"telemetry{len(self.bridges)}.json"),  # one each: they would see each other
-             "--sound-cache", str(self.root / "sounds"), "--pin", "", "--no-browser", *args],
+             "--sound-cache", str(self.root / "sounds"), "--pin", "", *args],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.bridges.append(process)
         lines = queue.Queue()
@@ -440,7 +440,6 @@ class StartupTest(unittest.TestCase):
         self.assertIn("[paths]", text)
         pin = [line for line in text.splitlines() if line.startswith("pin =")][0].split("=")[1].strip()
         self.assertRegex(pin, r"^\d{6}$")  # a new settings file gets a random PIN
-        self.assertIn("autostart = 1", text)
 
     def test_the_port_comes_from_the_settings(self):
         port = free_port()
@@ -676,27 +675,13 @@ class CleanupTest(unittest.TestCase):
             telemetry = folder / "townfall-companion-telemetry.json"
             names = ["townfall-companion-commands.json", "townfall-companion-steer.json",
                      "townfall-companion-confirm.json", "townfall-companion-audio.json",
-                     "townfall-companion-bridge.json", "townfall-companion-game.json", "townfall-companion-bridge.tmp"]
+                     "townfall-companion-bridge.json", "townfall-companion-bridge.tmp"]
             for path in [telemetry, *(folder / n for n in names)]:
                 path.write_text("{}")
             (folder / "somebody-elses.json").write_text("{}")
             bridge.remove_ipc_files(telemetry)
             self.assertEqual([p.name for p in folder.iterdir()], ["somebody-elses.json"])
             bridge.remove_ipc_files(telemetry)  # nothing left: no error
-
-    def test_the_game_is_running_while_its_heartbeat_is_recent(self):
-        sys.path.insert(0, str(COMPANION))
-        try:
-            import bridge
-        finally:
-            sys.path.remove(str(COMPANION))
-        with tempfile.TemporaryDirectory() as tmp:
-            beat = Path(tmp) / "game.json"
-            self.assertFalse(bridge.read_game_beat(beat, 90))
-            beat.write_text(json.dumps({"time": int(time.time())}))
-            self.assertTrue(bridge.read_game_beat(beat, 90))
-            beat.write_text(json.dumps({"time": int(time.time()) - 200}))
-            self.assertFalse(bridge.read_game_beat(beat, 90))
 
 
 if __name__ == "__main__":

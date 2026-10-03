@@ -187,10 +187,6 @@ return function(scriptsDir, tempDir, options)
     -- The game holds the camera: SetControlRotation has no effect.
     function world.lockCamera() controller.locked = true end
 
-    -- What the mod ran with os.execute (starting the companion): recorded, not run.
-    world.executed = {}
-    os.execute = function(command) world.executed[#world.executed + 1] = command; return true end
-
     function world.start() dofile(scriptsDir .. "/main.lua") end
 
     function world.enterMenu()
