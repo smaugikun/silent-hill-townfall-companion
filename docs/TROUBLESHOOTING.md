@@ -88,17 +88,26 @@ battery saver. iPhones can't vibrate from a web page.
 
 ### No sound on the phone
 
-- Tap the phone's screen once (browsers wait for a tap).
-- Settings: *In VIEW the phone plays the sound* on, and the volume up. In AV OUT the sound always plays on the PC.
+- Tap the phone's screen once (browsers wait for a tap), and keep the page open with the screen on: a phone that
+  dims its screen or switches to another app stops playing, and the game's sound comes back a few seconds later.
+- Settings: *In VIEW the phone plays the sound* on, and the *Phone volume* up (at 0 the phone is silent and the
+  game plays its own sound). In AV OUT the sound always plays on the PC.
 - The companion's window says **"Game sounds unavailable, the phone will be silent"** and why: usually
   **vgmstream** is missing. Unpack `vgmstream-win64.zip` into `TownfallCompanion\tools\vgmstream\` and start the
   companion again.
 
 ### The game still plays the CRTV sound too
 
-Turn on *Silence it in the game* in the settings. Some sounds always stay in the game: the CRTV's clicks and
-beeps, the monsters' voices, the cutscenes' music and the sound of videos in cutscenes. A CRTV video's sound
-stays in the game too when the videos aren't converted.
+Turn on *Silence it in the game* in the settings. It quiets only what the phone plays instead. Some sounds
+always stay in the game: the CRTV's clicks and beeps, the monsters' voices, and everything outside the CRTV (the
+story cutscenes' dialogue and music, the sound of videos on screens in cutscenes). A CRTV video's sound stays in
+the game too when the videos aren't converted. The *Phone volume* slider only sets the phone's own sound.
+
+### The CRTV doesn't show on the monitor in VIEW
+
+That is the default: in VIEW the game's CRTV is switched on without its raise animation, so its voices and
+mini-game work on the phone but nothing shows on the monitor. Turn on *In VIEW, show the game's CRTV on the
+monitor* and your character raises it as with L1 on a controller.
 
 ### A signal's voice is heard only in the game
 

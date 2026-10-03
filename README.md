@@ -19,6 +19,10 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
   switched on, so the signals' voices, the subtitles and the fine-tune mini-game come to the phone. With this on,
   your character raises the CRTV as with L1 on a controller and you see it on the monitor; off, it works without
   showing.
+- **Sound:** in VIEW the phone plays the CRTV's sounds and the signals' voices (and their videos' sound), and with
+  **Silence it in the game** on, the game's copy of what the phone plays goes quiet, so nothing is heard twice.
+  Only what comes out of the CRTV moves to the phone: the story cutscenes' dialogue and music stay in the game.
+  The volume slider is the phone's own; at 0 the game plays its sound again.
 - **AV OUT:** the CRTV is on the PC, with all its sound; the phone mirrors the picture or stays dark, and its
   buttons still tune, and F saves / confirms the frequency.
 - **The phone steers your character** (optional, off by default): in VIEW, turning the phone turns your
@@ -26,15 +30,15 @@ Also on **[Nexus Mods](https://www.nexusmods.com/silenthilltownfall/mods/125)**,
   again and it activates automatically. Phone tilt still changes the scanner view, but does not take over
   Townfall's vertical game camera.
 - **Auto pickup** (optional): switches to VIEW when the phone is picked up (from the table or a stand) and to
-  AV OUT when it is laid flat; set on a stand, it goes to AV OUT (or stays in VIEW, as chosen).
+  AV OUT when it is laid flat; set on a stand, it goes to AV OUT by default (or stays in VIEW, as chosen).
 - **Pause:** in the game's pause menu, everything on the phone holds too.
 - Vibration for the buttons and nearby signals, and settings for every part of it.
 
 ## Screenshots
 
-| Settings | CRTV video | Monster scanner |
+| CRTV video | Monster scanner | Settings |
 | --- | --- | --- |
-| ![Townfall Companion settings](docs/images/settings.jpg) | ![CRTV video on the phone](docs/images/crtv-blue.jpg) | ![Monster scanner on the phone](docs/images/crtv-red.jpg) |
+| ![CRTV video on the phone](docs/images/crtv-blue.jpg) | ![Monster scanner on the phone](docs/images/crtv-red.jpg) | ![Townfall Companion settings](docs/images/settings.jpg) |
 
 ## The game's sound and videos
 
@@ -153,8 +157,8 @@ mod made too. UE4SS and Python stay; other mods may use them.
   networks? Your Wi-Fi set to *Private* in Windows? Use the address the window shows, not `127.0.0.1`.
 - **WAITING FOR GAME:** get into gameplay, and check that `ue4ss\UE4SS.log` has
   `[TF-COMPANION] Townfall Companion loaded`.
-- **No sound:** tap the phone once, and check the companion's window for "Game sounds unavailable" and what it
-  says to do (usually: vgmstream is missing).
+- **No sound:** tap the phone once, keep its screen on, and check the companion's window for "Game sounds
+  unavailable" and what it says to do (usually: vgmstream is missing).
 - **"Port 8790 is taken":** not an error; use the new address the window shows, or set a fixed port in
   `companion.ini`.
 - **After a game update:** UE4SS for Townfall may need an update, and possibly this mod.
