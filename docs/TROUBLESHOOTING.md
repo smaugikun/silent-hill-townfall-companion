@@ -143,7 +143,7 @@ line must end in `: 1`.
 
 The mod loaded, but your UE4SS is older than the game-thread timers it needs (UE4SS added them in
 December 2025). Update to the newest [UE4SS for SILENT HILL Townfall](https://www.nexusmods.com/silenthilltownfall/mods/4)
-package. If that still prints this line, report it on the mod's Nexus page, with the UE4SS version it came with.
+package. If that still prints this line, report it on [the mod's Nexus page](https://www.nexusmods.com/silenthilltownfall/mods/125), with the UE4SS version it came with.
 
 ### The game feels slower
 
@@ -152,5 +152,5 @@ about 25 ms per second or less. Much more? Please report it with that line.
 
 ## Still stuck?
 
-Report it on the mod's Nexus page with: the companion window's text, the `[TF-` lines from `UE4SS.log`, and
-Settings → *Status* from the phone.
+Report it on [the mod's Nexus page](https://www.nexusmods.com/silenthilltownfall/mods/125) with: the companion window's text, the `[TF-` lines from
+`UE4SS.log`, and Settings → *Status* from the phone.

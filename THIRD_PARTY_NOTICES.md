@@ -5,6 +5,7 @@
 By **smaugikun**. The code, documentation, CRTV device art and monster figures are licensed under the
 [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](LICENSE) (CC BY-NC-SA 4.0).
 Commercial use is not permitted. Source code: https://github.com/smaugikun/silent-hill-townfall-companion.
+Also on Nexus Mods: https://www.nexusmods.com/silenthilltownfall/mods/125.
 Parts of the code were written with the help of AI.
 
 The code uses only Python's standard library and the browser's own APIs: no third-party code is included.

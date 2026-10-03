@@ -83,6 +83,13 @@ class NexusDescriptionTest(unittest.TestCase):
             "[list]\n[*][url=https://example.com]Site[/url]\n[/list]\n"))
         self.assertIn("a guide (docs/X.md in the download)", build.nexus_description(readme, ""))
 
+    def test_github_only_lines_stay_out_of_the_nexus_description(self):
+        readme = "Intro.\n\n<!-- github-only -->\nAlso on [Nexus](https://example.com).\n<!-- /github-only -->\n\nMore.\n"
+        self.assertEqual(build.nexus_description(readme, ""), "Intro.\n\nMore.\n")
+        text = build.nexus_description((ROOT / "README.md").read_text(encoding="utf-8"), build.REPO_URL)
+        self.assertNotIn("Also on", text)  # the README's own marked line
+        self.assertNotIn("github-only", text)
+
     def test_images_become_links_and_tables_become_lines(self):
         readme = "![The banner](docs/images/b.webp)\n\n| One | Two |\n| --- | --- |\n| ![a](docs/images/a.jpg) | **b** |\n"
         self.assertEqual(build.nexus_description(readme, "https://github.com/someone/repo"), (
