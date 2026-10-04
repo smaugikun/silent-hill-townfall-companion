@@ -50,18 +50,21 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    (`radvideo64.exe`) and `ffmpeg\` (`ffmpeg.exe`). Each folder has a `PUT FILES HERE.txt` listing exactly what
    goes in it. `RADTools.7z` opens with right-click → *Extract All* on Windows 11, or with
    [7-Zip](https://www.7-zip.org).
-4. Double-click **`Start Companion.bat`** (the first time Windows asks about the network: allow Python on
-   **private networks**). It converts the game's videos in the background, and its window shows the address
-   for the phone and the PIN. Each time it starts it also hides UE4SS's console windows
-   (`ue4ss\UE4SS-settings.ini`), which applies at the next game launch.
+4. Double-click **`Start Companion.py`** (it runs with the Python you installed, or open Command Prompt in the
+   TownfallCompanion folder and run: `py "Start Companion.py"`) and keep its window open; it closes by itself about
+   a minute after you exit the game. If Windows Firewall asks, allow Python on **private networks**. It converts the
+   game's videos in the background, and its window shows the address for the phone and the PIN. Each time it
+   starts it also hides UE4SS's console windows (`ue4ss\UE4SS-settings.ini`), which applies at the next game
+   launch. If double-clicking opens an editor instead, use *Open with* → Python, or `Start Companion.bat`, which
+   does the same.
 5. On the phone, open that address in Chrome and bookmark it, enter the PIN once, and tap the screen once
    (browsers play sound only after a tap). On Android, also set Chrome's *Insecure origins treated as secure*
    flag for that address, or turning the phone and Auto pickup won't work: [Phone setup](docs/PHONE_SETUP.md).
 
 ## Every time you play
 
-1. Double-click **`Start Companion.bat`** and keep its window open. It closes by itself about a minute after you
-   exit the game.
+1. Double-click **`Start Companion.py`** (or `Start Companion.bat`) and keep its window open. It closes by itself
+   about a minute after you exit the game.
 2. Open the bookmarked address on the phone.
 3. Start the game. The phone shows WAITING FOR GAME until you're in gameplay.
 

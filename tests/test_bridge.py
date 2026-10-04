@@ -742,5 +742,28 @@ class GameExitTest(unittest.TestCase):
                 process.wait()
 
 
+class LauncherTest(unittest.TestCase):
+    """Start Companion.py, the double-click launcher: it runs bridge.py and keeps its window open on errors."""
+    LAUNCHER = COMPANION.parent / "Start Companion.py"
+
+    def run_launcher(self, *args):
+        return subprocess.run([sys.executable, str(self.LAUNCHER), *args], input="\n", capture_output=True,
+                              text=True, timeout=30)
+
+    def test_it_runs_the_bridge(self):
+        result = self.run_launcher("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("usage: bridge.py", result.stdout)
+
+    def test_a_problem_stays_on_screen_until_enter_is_pressed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Path(tmp) / "companion.ini"
+            settings.write_text("[bridge]\npin = 12\n", encoding="utf-8")
+            result = self.run_launcher("--settings", str(settings), "--telemetry-file", str(Path(tmp) / "t.json"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("pin must be 4 to 12 digits", result.stdout)
+        self.assertIn("Press Enter to close this window.", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
