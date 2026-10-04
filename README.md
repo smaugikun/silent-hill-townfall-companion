@@ -10,15 +10,19 @@ The mod is also available on **[Nexus Mods](https://www.nexusmods.com/silenthill
 
 ## Features
 
-- **VIEW:** the CRTV is on the phone: dial, screen, monsters and signals with their videos and sound. Turn the
-  phone to look around; the TUNING buttons and F (save / confirm) control the game's CRTV, mini-game included.
-- **AV OUT:** the CRTV stays on the PC; the phone mirrors the picture or stays dark.
-- **Sound on the phone:** the CRTV's sounds and the signals' voices. *Silence it in the game* quiets the game's copy.
-  Story cutscenes stay in the game.
-- **Show the game's CRTV on the monitor** (optional): your character raises it as with L1.
-- **The phone steers your character** (optional): turn the phone in VIEW, and your character turns.
-- **Auto pickup** (optional): pick the phone up for VIEW, lay it flat or on a stand for AV OUT.
-- Pause support, vibration, and a **PIN** so others on your network can't open the page.
+**Townfall Companion turns your phone into the CRTV handheld scanner from SILENT HILL: Townfall.**
+
+Your phone's browser shows the CRTV with its dial, screen, tuning buttons and F key (saves the tuned frequency), plays its sounds and voices, and shows the signals, monsters and videos the game's CRTV finds. Turn the phone to look around with the scanner. No phone app is needed: the page runs from your PC over your home network. Audio and video are read and converted locally.
+
+- **VIEW mode** - the CRTV is on your phone. You can tune it the same way you would on the keyboard or controller.
+- **AV OUT mode** - the CRTV stays on your PC/TV screen.
+- **Motion** - turning the phone turns the scanner view.
+- **Auto Pickup** - picking the phone up switches to VIEW; laying it flat or setting it on a stand switches to AV OUT.
+- **Extras** - a PIN so others on your network can't open the page, vibration for buttons and nearby signals, etc.
+- The CRTV on the phone has an extra button (**F**) for saving the frequency.
+
+Many features can be modified in the settings found in the phone "app", in the top-right corner.
+
 
 | CRTV video | Monster scanner | Settings |
 | --- | --- | --- |
