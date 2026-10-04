@@ -1,5 +1,5 @@
 """Converts the game's videos for the phone: the clips the CRTV shows, and the videos on screens in
-cutscenes. "Convert Game Videos.bat" runs it; once is enough. A run converts only what is missing (--force
+cutscenes. The companion runs it by itself at its start; by hand: py companion/convert_videos.py. A run converts only what is missing (--force
 redoes everything). It takes every video under the folders in SOURCES, and the mod reports the path of the one
 playing, so new videos there need no mapping; videos in another folder (e.g. a DLC's own) would need adding
 to SOURCES and to the mod's path patterns (CRTV_VIDEO in tf_common.lua, tf_cutscene.lua).
@@ -399,7 +399,7 @@ class GameVideos:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Converts Townfall's videos for the phone (see Convert Game Videos.bat).")
+    parser = argparse.ArgumentParser(description="Converts Townfall's videos for the phone (the companion runs it by itself at its start).")
     parser.add_argument("--force", action="store_true", help="convert again what was converted already")
     parser.add_argument("--settings", type=Path, default=config.SETTINGS_FILE, help="the settings file (default: %(default)s)")
     parser.add_argument("--game-dir", type=Path, help="overrides game in the settings")

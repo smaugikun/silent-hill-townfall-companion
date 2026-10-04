@@ -4,7 +4,7 @@ The phone needs no app: it opens a page the companion serves on your PC.
 
 ## 1. Connect
 
-1. Start `Start Companion.bat` on the PC. Its window shows the address for the phone, for example:
+1. Double-click `Start Companion.py` on the PC. Its window shows the address for the phone, for example:
 
    ```text
    On the phone: http://192.168.1.50:8790

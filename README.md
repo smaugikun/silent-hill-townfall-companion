@@ -55,16 +55,15 @@ Tested on SILENT HILL: Townfall Steam build 25534608.
    a minute after you exit the game. If Windows Firewall asks, allow Python on **private networks**. It converts the
    game's videos in the background, and its window shows the address for the phone and the PIN. Each time it
    starts it also hides UE4SS's console windows (`ue4ss\UE4SS-settings.ini`), which applies at the next game
-   launch. If double-clicking opens an editor instead, use *Open with* → Python, or `Start Companion.bat`, which
-   does the same.
+   launch. If double-clicking opens an editor instead, right-click the file → *Open with* → Python (tick *Always*).
 5. On the phone, open that address in Chrome and bookmark it, enter the PIN once, and tap the screen once
    (browsers play sound only after a tap). On Android, also set Chrome's *Insecure origins treated as secure*
    flag for that address, or turning the phone and Auto pickup won't work: [Phone setup](docs/PHONE_SETUP.md).
 
 ## Every time you play
 
-1. Double-click **`Start Companion.py`** (or `Start Companion.bat`) and keep its window open. It closes by itself
-   about a minute after you exit the game.
+1. Double-click **`Start Companion.py`** and keep its window open. It closes by itself about a minute after you
+   exit the game.
 2. Open the bookmarked address on the phone.
 3. Start the game. The phone shows WAITING FOR GAME until you're in gameplay.
 

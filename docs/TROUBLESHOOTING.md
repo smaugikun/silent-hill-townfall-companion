@@ -2,7 +2,7 @@
 
 Where to look:
 
-- **The companion's window** (`Start Companion.bat`) says what it found, which port it uses, and what is
+- **The companion's window** (`Start Companion.py`) says what it found, which port it uses, and what is
   missing.
 - **The phone's settings** (⚙ → *Status*) show the connection, the game, the sensors and the sound.
 - **`...\Win64\ue4ss\UE4SS.log`** shows whether the in-game part runs (lines starting with `[TF-`). The game
@@ -11,17 +11,18 @@ Where to look:
 
 ## The companion
 
-### "Python was not found", or "needs Python 3.10 or newer"
+### Nothing happens, or "needs Python 3.10 or newer"
 
 Install Python 3.10 or newer from [python.org](https://www.python.org/downloads/) and tick **"Add python.exe to
 PATH"** in the installer. Already installed without it? Run the installer again, choose *Modify*, and tick
 *Add Python to environment variables*.
 
-### The window opens and closes at once
+### Double-clicking `Start Companion.py` opens an editor, or nothing opens
 
-Start `Start Companion.bat` by double-clicking it in its folder; it stays open on errors and shows them. If it
-still closes, open a Command Prompt in `TownfallCompanion` and run `companion\run.bat bridge.py` to see the
-message.
+Windows has no program set for `.py` files, or an editor you installed took them over. Right-click the file →
+*Open with* → *Choose another app* → **Python** (tick *Always use this app*). Or open a Command Prompt in the
+`TownfallCompanion` folder and run `py "Start Companion.py"` (or `python "Start Companion.py"`). The window stays
+open on errors and shows them.
 
 ### "Port 8790 is taken by another program, so the companion uses port 8791"
 
@@ -80,7 +81,7 @@ deep, and UE4SS won't load it either: move it up so that `enabled.txt` is in `..
 ### The screen says RESTART THE BRIDGE
 
 The page is newer than the companion still running from before an update: close the companion's window and
-start `Start Companion.bat` again.
+start `Start Companion.py` again.
 
 ### The screen says WAITING FOR GAME
 
@@ -128,7 +129,7 @@ Settings → *Status* → *Talking* says why, e.g. a line that isn't in the game
 
 ### No story videos, only a drawn picture
 
-You do **not** need to run `Convert Game Videos.bat` first. As soon as the companion starts, it begins pre-caching all missing videos automatically in one background worker, without waiting for gameplay telemetry or a save to load. If the phone requests a clip
+As soon as the companion starts, it begins pre-caching all missing videos automatically in one background worker, without waiting for gameplay telemetry or a save to load. If the phone requests a clip
 before the background worker reaches it, that clip converts immediately as a request-time fallback.
 
 The companion window will report the progress, for example:
@@ -147,9 +148,9 @@ CPU priority (and FFmpeg uses one encoding thread) so on-demand phone audio/dial
 
 If automatic conversion says a tool is missing, put RAD Video Tools in `TownfallCompanion\tools\radtools\`, FFmpeg in
 `tools\ffmpeg\` and vgmstream in `tools\vgmstream\` (each folder has a `PUT FILES HERE.txt`; FFmpeg can also be
-installed with `winget install Gyan.FFmpeg.Essentials`). `Convert Game Videos.bat` is a manual pre-launch pre-cache
-shortcut if you want every clip ready before starting Townfall, so no conversion work runs during play.
-If a video reports **FAILED**, the batch file can also be used to retry/pre-cache missing clips.
+installed with `winget install Gyan.FFmpeg.Essentials`). To convert every clip before you start
+Townfall, run `py companion/convert_videos.py` in a Command Prompt in `TownfallCompanion` (add `--force` to redo
+all); it also retries a video that reported **FAILED**.
 
 ## UE4SS and the game
 

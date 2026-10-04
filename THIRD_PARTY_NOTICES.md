@@ -49,7 +49,7 @@ under the ISC License (copyright its many authors, see its COPYING file).
 ## Video tools, not included
 
 Used by the companion to convert the game's videos automatically on the user's PC. When the companion starts, it pre-caches missing videos in the background; a phone request can also
-convert a not-yet-cached clip immediately as a fallback. `Convert Game Videos.bat` is only a manual pre-launch pre-cache step.
+convert a not-yet-cached clip immediately as a fallback.
 
 ### RAD Video Tools
 

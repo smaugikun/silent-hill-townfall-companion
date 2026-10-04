@@ -62,7 +62,6 @@ game =
 ; vgmstream-cli.exe reads the game's sounds; automatic video conversion needs it too.
 vgmstream =
 ; ffmpeg.exe and radvideo64.exe (RAD Video Tools): missing videos pre-cache automatically when the companion starts.
-; Convert Game Videos.bat is a manual pre-cache shortcut if you want no conversion work during play.
 ffmpeg =
 radvideo =
 """

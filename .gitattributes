@@ -1,4 +1,2 @@
-# cmd needs CRLF in .bat files: with bare LF its goto and labels can miss.
-*.bat text eol=crlf
 # The notes in the tools folders are read in Notepad.
 TownfallCompanion/tools/**/*.txt text eol=crlf
