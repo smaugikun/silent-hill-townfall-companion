@@ -329,6 +329,42 @@ class CrtvScreenTest(ModTest):
         self.assertIsNone(self.crtv()["fineTune"])
         self.assertEqual(self.logged("mini-game expected"), 2)  # and again when it goes missing again
 
+    def test_the_mini_game_is_found_on_the_widget_that_has_it(self):
+        # The game's CRTV screen widget plays the videos; the mini-game's canvas is on another one.
+        other = self.world.splitMiniGame()
+        self.tune(0)  # on a waypoint's channel, not found yet
+        ui = self.world.fineTuneUi
+        ui["visible"] = True
+        ui["box"]["x"] = 190
+        self.assertEqual(self.crtv()["fineTune"], {"box": 0.25, "zone": 0.5, "text": "FINE TUNE - SEARCHING"})
+        self.assertEqual(self.logged("[TF-CRTV] mini-game widget: WBP_PortableTVScreen_C"), 1)
+        self.assertEqual(self.logged("mini-game expected"), 0)
+        self.world.tick(5)
+        self.assertEqual(self.world.findAllOfUserWidgets, 1)  # found once, then kept
+        self.assertIsNotNone(self.telemetry()["crtv"]["fineTune"])
+
+    def test_the_mini_game_widget_is_not_looked_for_while_none_is_due(self):
+        self.world.splitMiniGame()
+        self.world.fineTuneUi["visible"] = True
+        self.tune(2)
+        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertEqual(self.world.findAllOfUserWidgets, 0)
+
+    def test_without_any_widget_for_it_the_log_names_the_ones_that_look_like_it(self):
+        other = self.world.splitMiniGame()
+        other["Canvas_FineTuning"] = None  # nothing has the canvas now
+        self.tune(0)
+        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertEqual(self.logged("no user widget of 2 has a fine-tune canvas; named like the CRTV's screen: "
+                                     "WBP_CRTV_C /Game/Townfall/UI/WBP_CRTV.WBP_CRTV_C"), 1)
+
+    def test_the_search_for_the_widget_isnt_repeated_every_sample(self):
+        self.world.splitMiniGame()["Canvas_FineTuning"] = None
+        self.tune(0)
+        for _ in range(4):
+            self.world.tick(1)
+        self.assertLessEqual(self.world.findAllOfUserWidgets, 2)  # at most once every few seconds
+
     def test_a_fine_tune_bar_without_width_is_logged(self):
         self.tune(0)
         ui = self.world.fineTuneUi
@@ -354,6 +390,42 @@ class CrtvScreenTest(ModTest):
         self.radio["active"] = True
         self.world.playVideo("EnemyVideoPlayer_Bink", None)
         self.assertIsNone(self.crtv()["video"])
+
+
+class ProbeTest(ModTest):
+    """What the character keeps about the radio, listed and watched in the log (tf_probe.lua), to name what holds his
+    hands up."""
+
+    def setUp(self):
+        super().setUp()
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(3)
+
+    def test_the_members_about_the_radio_are_listed_once(self):
+        self.assertEqual(self.logged("[TF-PROBE] pawn BP_Bill_C: functions RequestRadioOFF, RequestRadioON"), 1)
+        self.assertEqual(self.logged("[TF-PROBE] pawn properties bRadioRaised"), 1)
+        self.assertEqual(self.logged("[TF-PROBE] anim ABP_Bill_C: functions none"), 1)
+        self.assertEqual(self.logged("[TF-PROBE] anim properties bHoldingRadio"), 1)  # Speed and Jump aren't about the radio
+        self.world.tick(5)
+        self.assertEqual(self.logged("[TF-PROBE] pawn BP_Bill_C"), 1)
+
+    def test_a_value_is_logged_when_it_changes(self):
+        self.assertEqual(self.logged("[TF-PROBE] pawn.bRadioRaised = false"), 1)
+        self.assertEqual(self.logged("[TF-PROBE] anim.bHoldingRadio = false"), 1)
+        self.world.tick(3)
+        self.assertEqual(self.logged("[TF-PROBE] pawn.bRadioRaised"), 1)
+        self.world.player["bRadioRaised"] = True
+        self.world.anim["bHoldingRadio"] = True
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-PROBE] pawn.bRadioRaised = true"), 1)
+        self.assertEqual(self.logged("[TF-PROBE] anim.bHoldingRadio = true"), 1)
+
+    def test_nothing_is_logged_without_a_phone(self):
+        self.beat(phones=0)
+        self.world.tick(1)
+        self.world.player["bRadioRaised"] = True
+        self.world.tick(3)
+        self.assertEqual(self.logged("[TF-PROBE] pawn.bRadioRaised = true"), 0)
 
 
 class EnemyCrtvTest(ModTest):
@@ -597,6 +669,10 @@ class RangeSignalTest(ModTest):
 
 
 class PhoneCommandTest(ModTest):
+    def seconds(self, n):
+        for _ in range(n):
+            self.world.tick(1)  # one tick is a second on the game's clock
+
     def command(self, seq, active, frequency, animate=False):
         # Written the way bridge.py writes it.
         self.commands_file.write_text(json.dumps({"seq": seq, "active": active, "animate": animate, "frequency": frequency}))
@@ -649,9 +725,24 @@ class PhoneCommandTest(ModTest):
         self.assertEqual(self.logged("phone command: active=true (animated)"), 1)
         self.command(102, False, 0.23, animate=True)
         self.world.tick(1)
-        # Forced, as a drawn weapon puts it away: the unforced request left it on the monitor.
-        self.assertEqual(list(self.radio["requests"].values()), ["on", "off (forced)"])
+        # Plain first, as the controller lowers it: radio and hands go down together.
+        self.assertEqual(list(self.radio["requests"].values()), ["on", "off"])
         self.assertFalse(self.radio["active"])
+
+    def test_a_lowering_the_game_ignores_is_asked_again_forced(self):
+        # Forced, the radio goes but the hands stay up, so it is the second ask, not the first.
+        self.play()
+        self.radio["active"] = True
+        self.radio["ignoreRequests"] = True
+        self.command(101, False, 0.23, animate=True)
+        self.seconds(2)
+        self.command(102, False, 0.23, animate=True)  # the phone asks again once it sees the CRTV still up
+        self.seconds(2)
+        self.command(103, False, 0.23, animate=True)
+        self.seconds(8)  # much later it is a new lowering: plain again
+        self.command(104, False, 0.23, animate=True)
+        self.seconds(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["off", "off (forced)", "off (forced)", "off"])
 
     def test_an_animated_lowering_is_asked_for_even_when_the_radio_already_says_it_is_down(self):
         # The character can hold the CRTV up on the monitor with the radio switched off under it (a silent
@@ -660,7 +751,7 @@ class PhoneCommandTest(ModTest):
         self.radio["active"] = False
         self.command(101, False, 0.23, animate=True)
         self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), ["off (forced)"])
+        self.assertEqual(list(self.radio["requests"].values()), ["off"])
 
     def test_a_silent_lowering_leaves_the_character_alone(self):
         self.play()
@@ -691,6 +782,49 @@ class PhoneCommandTest(ModTest):
         self.command(103, True, 0.23, animate=True)
         self.world.tick(2)  # a moment later it is asked again
         self.assertEqual(list(self.radio["requests"].values()), ["on", "on"])
+
+    def lower_animated(self, montage):
+        self.play()
+        self.command(101, True, 0.23, animate=True)
+        self.world.tick(1)
+        self.world.setMontage(montage)
+        self.command(102, False, 0.23, animate=True)
+        self.seconds(2)  # the radio is down; the hands are looked at a moment after
+
+    def test_the_hands_are_put_down_when_the_radios_montage_is_left_playing(self):
+        self.lower_animated("AM_Radio_Hold /Game/Townfall/Anim/AM_Radio_Hold")
+        self.assertEqual(list(self.world.anim["stops"].values()), ["AM_Radio_Hold /Game/Townfall/Anim/AM_Radio_Hold"])
+        self.assertEqual(self.logged("CRTV lowered with its montage still playing: stopped AM_Radio_Hold"), 1)
+
+    def test_a_montage_that_isnt_the_radios_is_left_alone_and_named(self):
+        self.lower_animated("AM_Bill_Attack /Game/Townfall/Anim/AM_Bill_Attack")
+        self.assertEqual(list(self.world.anim["stops"].values()), [])
+        self.assertEqual(self.logged("montage playing: AM_Bill_Attack /Game/Townfall/Anim/AM_Bill_Attack (not the radio's"), 1)
+
+    def test_no_montage_is_logged_so_the_hands_can_be_traced_elsewhere(self):
+        self.lower_animated(None)
+        self.assertEqual(self.logged("CRTV lowered: no montage on the character"), 1)
+
+    def test_the_hands_wait_for_the_radio_to_be_down(self):
+        self.play()
+        self.radio["ignoreRequests"] = True  # the game hasn't carried the lowering out
+        self.radio["active"] = True
+        self.world.setMontage("AM_Radio_Hold")
+        self.command(101, False, 0.23, animate=True)
+        self.seconds(3)
+        self.assertEqual(list(self.world.anim["stops"].values()), [])
+        self.radio["active"] = False
+        self.seconds(1)
+        self.assertEqual(len(list(self.world.anim["stops"].values())), 1)
+
+    def test_a_silent_lowering_doesnt_touch_the_hands(self):
+        self.play()
+        self.command(101, True, 0.23)
+        self.world.setMontage("AM_Radio_Hold")
+        self.world.tick(1)
+        self.command(102, False, 0.23)
+        self.seconds(3)
+        self.assertEqual(list(self.world.anim["stops"].values()), [])
 
     def test_lowering_leaves_the_dial(self):
         self.play()

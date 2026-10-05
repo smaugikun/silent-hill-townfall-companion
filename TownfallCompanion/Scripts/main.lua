@@ -20,6 +20,7 @@ local signals = require("tf_signals")
 local cutscene = require("tf_cutscene")
 local audio = require("tf_audio")
 local commands = require("tf_commands")
+local probe = require("tf_probe")
 
 local SAMPLE_MS = 100  -- telemetry rate
 local COMMAND_MS = 50  -- phone commands; steering needs the quick turnaround
@@ -161,6 +162,7 @@ LoopInGameThreadWithDelay(UPDATE_MS, guarded("enemy update", whenPhone(enemies.u
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("crtv update", whenPhone(crtv.update)))
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("signal update", whenPhone(signals.update)))
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("cutscene update", whenPhone(cutscene.update)))
+LoopInGameThreadWithDelay(UPDATE_MS, guarded("probe", whenPhone(probe.update)))
 LoopInGameThreadWithDelay(SAMPLE_MS, guarded("sample", whenPhone(sample)))
 LoopInGameThreadWithDelay(COMMAND_MS, guarded("phone command", commands.poll))
 LoopInGameThreadWithDelay(AUDIO_MS, guarded("audio", audio.update))

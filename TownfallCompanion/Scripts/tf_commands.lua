@@ -83,6 +83,8 @@ function M.poll()
         end
     end
 
+    crtv.pump() -- after a lowering: puts the character's hands down if they stayed up
+
     -- The phone sends its heading; the player turns by as much as the phone did since the one before.
     -- Phone tilt remains a scanner-view effect and does not take over Townfall's vertical camera.
     local steer, seq = fresh(channels.steer)

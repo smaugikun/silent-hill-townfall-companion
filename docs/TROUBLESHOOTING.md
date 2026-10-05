@@ -125,17 +125,23 @@ monitor* and your character raises it as with L1 on a controller. Switching that
 selector, shows or hides the CRTV on the monitor at once; the phone only ever puts away a CRTV it raised itself,
 not one you raised with the controller or keyboard.
 
-### The CRTV stays on the monitor after leaving VIEW
+### The CRTV stays on the monitor, or the hands stay up, after leaving VIEW
 
-The phone asks your character to put it away, and asks again a couple of times if he hasn't. If it is still up,
-look in `UE4SS.log` for `[TF-CRTV] phone command: active=false (animated)` and report whether the CRTV changed
-after it.
+The phone asks your character to put the CRTV away the way the controller does, so the radio and his hands go
+down together. If the game doesn't carry that out, the phone asks again, forcing it: the radio then goes at
+once, and the mod stops a leftover radio animation so the hands follow. Report what `UE4SS.log` says:
+
+- `[TF-CRTV] phone command: active=false (animated)`, and whether the CRTV changed after it,
+- `[TF-CRTV] CRTV lowered ...`: what was playing on the character when the radio went (the animation that holds
+  his hands up, or that none is),
+- the `[TF-PROBE]` lines: what the game keeps about the radio on the character, and when it changes.
 
 ### The fine-tune mini-game shows on the monitor but not on the phone
 
-When you are tuned to a waypoint that isn't found yet, `UE4SS.log` says `[TF-CRTV] mini-game expected, none sent
-to the phone:` and why (the screen has no fine-tune canvas, the canvas isn't shown, or its bar has no width).
-Report that line, with the `[TF-CRTV] fine tune "..."` line before it.
+The mod looks for the game's mini-game screen while you are tuned to a waypoint that isn't found yet.
+`UE4SS.log` has `[TF-CRTV] mini-game widget: ...` once it finds it. If it says `mini-game expected, none sent to
+the phone:` or `no user widget of N has a fine-tune canvas`, report that line (it names the widgets that look
+like the CRTV's screen), with the `[TF-CRTV] fine tune "..."` line near it.
 
 ### A signal's voice is heard only in the game
 
