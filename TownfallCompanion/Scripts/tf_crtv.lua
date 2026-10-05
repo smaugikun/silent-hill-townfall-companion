@@ -93,6 +93,8 @@ local function findMiniGame(radio)
         { "Radio", radio },
         { "RadioActor", held(function() return pawn:GetRadioActor() end) },
         { "HandheldRadio", held(function() return pawn.HandheldRadio end) },
+        -- The class the mod's author named for the mini-game's screen (from the game's SDK dump).
+        { "WBP_PortableTVScreen_C", held(function() return FindFirstOf("WBP_PortableTVScreen_C") end) },
     }, "Canvas_FineTuning", "mini-game")
     if tuneWidget then
         common.logChange("fine tune widget", "TF-CRTV", "mini-game widget: " .. tostring(tuneWidget:GetFullName()))

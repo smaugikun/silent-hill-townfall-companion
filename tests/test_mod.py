@@ -343,6 +343,16 @@ class CrtvScreenTest(ModTest):
         self.assertEqual(self.world.radioActorCalls, 1)  # looked for once, then the widget is kept
         self.assertIsNotNone(self.telemetry()["crtv"]["fineTune"])
 
+    def test_the_mini_game_class_the_author_named_is_looked_up_directly(self):
+        # Not held by anything the mod reaches: found by its class name.
+        other = self.world.splitMiniGame()
+        self.world.crtvWidget["MiniGameScreen"] = None
+        self.world.firstOf["WBP_PortableTVScreen_C"] = other
+        self.tune(0)
+        self.world.fineTuneUi["visible"] = True
+        self.assertIsNotNone(self.crtv()["fineTune"])
+        self.assertEqual(self.logged("[TF-CRTV] mini-game widget: WBP_PortableTVScreen_C"), 1)
+
     def test_the_search_lists_what_it_meets_in_the_log(self):
         self.world.splitMiniGame()
         self.tune(0)

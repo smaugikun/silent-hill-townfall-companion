@@ -152,6 +152,9 @@ return function(scriptsDir, tempDir, options)
         end
         return #found > 0 and found or nil
     end
+    -- FindFirstOf: the first instance of a class; tests register one in world.firstOf[class].
+    world.firstOf = {}
+    function FindFirstOf(cls) return world.firstOf[cls] end
     function LoopInGameThreadWithDelay(ms, fn)
         loops[#loops + 1] = { ms = ms, fn = fn }
         return #loops
