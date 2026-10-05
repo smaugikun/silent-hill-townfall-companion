@@ -21,6 +21,7 @@ return function(scriptsDir, tempDir, options)
     local opened, realOpen = {}, io.open
     world.telemetryWrites = 0 -- how often the telemetry file was opened for writing
     io.open = function(path, mode)
+        path = path:gsub("\\", "/") -- the mod joins %TEMP% paths with "\"; elsewhere than Windows that must still open
         if mode == "w" and path:find("telemetry.json", 1, true) then world.telemetryWrites = world.telemetryWrites + 1 end
         local f, err = realOpen(path, mode)
         if f and mode == "r" then opened[#opened + 1] = f end

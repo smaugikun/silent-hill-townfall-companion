@@ -121,7 +121,21 @@ the game too when the videos aren't converted. The *Phone volume* slider only se
 
 That is the default: in VIEW the game's CRTV is switched on without its raise animation, so its voices and
 mini-game work on the phone but nothing shows on the monitor. Turn on *In VIEW, show the game's CRTV on the
-monitor* and your character raises it as with L1 on a controller.
+monitor* and your character raises it as with L1 on a controller. Switching that setting, or the AV OUT / VIEW
+selector, shows or hides the CRTV on the monitor at once; the phone only ever puts away a CRTV it raised itself,
+not one you raised with the controller or keyboard.
+
+### The CRTV stays on the monitor after leaving VIEW
+
+The phone asks your character to put it away, and asks again a couple of times if he hasn't. If it is still up,
+look in `UE4SS.log` for `[TF-CRTV] phone command: active=false (animated)` and report whether the CRTV changed
+after it.
+
+### The fine-tune mini-game shows on the monitor but not on the phone
+
+When you are tuned to a waypoint that isn't found yet, `UE4SS.log` says `[TF-CRTV] mini-game expected, none sent
+to the phone:` and why (the screen has no fine-tune canvas, the canvas isn't shown, or its bar has no width).
+Report that line, with the `[TF-CRTV] fine tune "..."` line before it.
 
 ### A signal's voice is heard only in the game
 

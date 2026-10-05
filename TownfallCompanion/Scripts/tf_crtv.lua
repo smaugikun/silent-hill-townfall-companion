@@ -61,10 +61,18 @@ local function slotSpan(image)
     return pos.X - align.X * size.X + image.RenderTransform.Translation.X, size.X
 end
 
-local function fineTune(radio)
+-- `expected`: the CRTV is tuned to a waypoint that isn't found yet, which is when the game runs the mini-game
+-- (signal type "waypoint", the phone's F key finds it). If the screen then doesn't read as showing it, the phone
+-- has none to show while the monitor has: the log says which read comes back empty.
+local function fineTune(radio, expected)
+    local function nothing(why)
+        if expected then common.logChange("fine tune read", "TF-CRTV", "mini-game expected, none sent to the phone: " .. why) end
+        return nil
+    end
     local widget = radio:GetCRTVWidget()
     local canvas = widget and widget:IsValid() and widget.Canvas_FineTuning
-    if not canvas or not canvas:IsValid() or not canvas:IsVisible() then return nil end
+    if not canvas or not canvas:IsValid() then return nothing("the CRTV's screen widget has no fine-tune canvas") end
+    if not canvas:IsVisible() then return nothing("the fine-tune canvas isn't shown") end
     local bandX, bandW = slotSpan(widget.Image_NarrowBand)
     local boxX, boxW = slotSpan(widget.Image_DigitalNeedle)
     local zoneX, zoneW = slotSpan(widget.Image_FineTuneZone)
@@ -72,7 +80,8 @@ local function fineTune(radio)
     text = ok and text or ""
     common.logChange("fine tune", "TF-CRTV", string.format("fine tune \"%s\": bar %.1f+%.1f box %.1f+%.1f diamond %.1f+%.1f",
         text, bandX, bandW, boxX, boxW, zoneX, zoneW))
-    if bandW <= 0 then return nil end
+    if bandW <= 0 then return nothing("the bar has no width") end
+    common.clearChannel("fine tune read")
     return {
         box = (boxX + boxW / 2 - bandX) / bandW,
         zone = (zoneX + zoneW / 2 - bandX) / bandW,
@@ -116,6 +125,13 @@ end
 -- RequestRadioOFF(Force) on BP_Bill). Silent: SetRadioInActiveMode alone flips the state, the CRTV works (voices,
 -- sound, mini-game) and nothing shows on the monitor. If the requests aren't there (another build of the game)
 -- the silent way is the fallback for the animated, logged once.
+-- The two are not interchangeable: what the character holds up on the monitor and the radio's active mode are
+-- apart. A CRTV he raised is lowered with his request, never with the silent flip (that leaves it on the
+-- monitor with the radio off). One switched on silently is up as far as the radio goes, so apply() never asks him
+-- to raise it: the phone puts it away and raises it again the other way (scanner.js).
+-- Lowered with Force: played with the phone, the unforced request left the CRTV on the monitor until a weapon
+-- was drawn, which puts it away by itself. Not confirmed in the game that Force is what fixes it: if the
+-- CRTV still stays up, the log has "phone command: active=false (animated)" and no change after it.
 local REQUEST_GAP_S = 1.5 -- a raise takes a moment: asking for the same again at once would only start it over
 local lastRequest = { active = nil, at = -math.huge }
 
@@ -125,7 +141,7 @@ local function request(pawn, active, animate)
     if lastRequest.active == active and now - lastRequest.at < REQUEST_GAP_S then return end
     lastRequest.active, lastRequest.at = active, now
     local ok, err = pcall(function()
-        if active then pawn:RequestRadioON() else pawn:RequestRadioOFF(false) end
+        if active then pawn:RequestRadioON() else pawn:RequestRadioOFF(true) end
     end)
     if ok then
         common.clearChannel("radio request")
@@ -142,7 +158,11 @@ end
 -- logged: the phone's needle then goes back to the game's.
 function M.apply(active, frequency, animate)
     local pawn = player.pawn()
-    if active ~= nil and pawn:GetIsRadioInActiveMode() ~= active then request(pawn, active, animate) end
+    -- An animated lowering is asked for even if the radio already says it is down: the character can still hold
+    -- the CRTV up on the monitor (the radio switched off silently under it, or a request of his own half done).
+    if active ~= nil and (pawn:GetIsRadioInActiveMode() ~= active or (animate and not active)) then
+        request(pawn, active, animate)
+    end
     if active == false then return end
     local wanted = math.max(0, math.min(1, frequency))
     pawn:GetRadio():SetTunedFrequency(wanted)
@@ -197,7 +217,9 @@ function M.json(state)
     if state.active then
         local radio = player.pawn():GetRadio()
         video, seconds = playingVideo(radio, state.type)
-        tune = common.optional("fine tune error", "TF-CRTV", function() return fineTune(radio) end, nil)
+        local expected = state.type == "waypoint"
+        tune = common.optional("fine tune error", "TF-CRTV", function() return fineTune(radio, expected) end, nil)
+        if not expected then common.clearChannel("fine tune read") end
     end
     return string.format('{"active":%s,"frequency":%.3f,"signalType":"%s","video":%s,"videoTime":%s,'
         .. '"fineTune":%s,"needleColours":%s}',

@@ -317,6 +317,35 @@ class CrtvScreenTest(ModTest):
         tune = self.crtv()["fineTune"]
         self.assertEqual((tune["box"], tune["zone"]), (0.375, 0.5))
 
+    def test_a_mini_game_the_phone_doesnt_get_is_logged_when_the_game_should_be_running_it(self):
+        self.tune(0)  # on a waypoint's channel, not found yet: the game runs the mini-game
+        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the fine-tune canvas isn't shown"), 1)
+        self.world.tick(3)
+        self.assertEqual(self.logged("mini-game expected"), 1)  # once, not on every sample
+        self.world.fineTuneUi["visible"] = True
+        self.assertIsNotNone(self.crtv()["fineTune"])
+        self.world.fineTuneUi["visible"] = False
+        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertEqual(self.logged("mini-game expected"), 2)  # and again when it goes missing again
+
+    def test_a_fine_tune_bar_without_width_is_logged(self):
+        self.tune(0)
+        ui = self.world.fineTuneUi
+        ui["visible"] = True
+        ui["band"]["w"] = 0
+        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the bar has no width"), 1)
+
+    def test_no_complaint_about_the_mini_game_while_none_is_due(self):
+        self.tune(2)  # an enemy
+        self.crtv()
+        self.tune(None)  # nothing tuned in
+        self.crtv()
+        self.tune(1)  # a waypoint found: the mini-game is over
+        self.crtv()
+        self.assertEqual(self.logged("mini-game expected"), 0)
+
     def test_nothing_while_lowered_or_stopped(self):
         self.tune(2)
         self.world.playVideo("EnemyVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Enraged_Focused.bk2", 3)
@@ -620,7 +649,36 @@ class PhoneCommandTest(ModTest):
         self.assertEqual(self.logged("phone command: active=true (animated)"), 1)
         self.command(102, False, 0.23, animate=True)
         self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), ["on", "off"])
+        # Forced, as a drawn weapon puts it away: the unforced request left it on the monitor.
+        self.assertEqual(list(self.radio["requests"].values()), ["on", "off (forced)"])
+        self.assertFalse(self.radio["active"])
+
+    def test_an_animated_lowering_is_asked_for_even_when_the_radio_already_says_it_is_down(self):
+        # The character can hold the CRTV up on the monitor with the radio switched off under it (a silent
+        # switch-off after an animated raise): lowering it must still reach him.
+        self.play()
+        self.radio["active"] = False
+        self.command(101, False, 0.23, animate=True)
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), ["off (forced)"])
+
+    def test_a_silent_lowering_leaves_the_character_alone(self):
+        self.play()
+        self.command(101, True, 0.23)
+        self.world.tick(1)
+        self.command(102, False, 0.23)
+        self.world.tick(1)
+        self.assertEqual((self.radio["active"], list(self.radio["requests"].values())), (False, []))
+
+    def test_an_animated_raise_is_not_asked_for_when_the_radio_is_up_already(self):
+        # Putting it away and raising it the other way is the phone's job (scanner.js): two commands, so the
+        # game's state settles in between.
+        self.play()
+        self.command(101, True, 0.23)
+        self.world.tick(1)
+        self.command(102, True, 0.23, animate=True)
+        self.world.tick(1)
+        self.assertEqual(list(self.radio["requests"].values()), [])
 
     def test_an_animated_request_the_game_hasnt_acted_on_yet_is_not_repeated_at_once(self):
         self.play()
