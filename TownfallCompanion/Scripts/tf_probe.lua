@@ -1,79 +1,110 @@
--- Diagnostics: what the game keeps about the CRTV on the character and on his animation, so that what raises
--- his hands (and keeps them up when the radio goes) can be named from UE4SS.log. Once per pawn it lists the
--- functions and properties whose names have "radio", "crtv" or "handheld" in them, on his class and on the
--- animation instance of his mesh; then, once a second, it logs a number or flag among them when it changes.
--- Nothing here changes the game, and it stays silent where the UE4SS build can't list members.
+-- Diagnostics: what the game keeps behind the CRTV's screen. Starting from the objects the mod can reach (the CRTV's
+-- screen widget, the radio, the radio's actor) it looks through the objects they hold, a few steps deep and only
+-- those that look like part of the CRTV's UI, for one that has a given property, and lists every class it meets
+-- with its properties (a flag or number with its value now) in the log, so that what the mini-game's screen is
+-- made of can be read from UE4SS.log. Nothing here changes the game; where the UE4SS build can't list properties
+-- it finds nothing and says so once.
 
 local common = require("tf_common")
-local player = require("tf_player")
 
 local M = {}
 
-local MAX_WATCHED = 40
-local probedPawn
-local targets = {} -- {label, object, names}: what is watched
+local MAX_OBJECTS = 120 -- looked at per search
+local MAX_DEPTH = 3     -- steps from where it starts
+local MAX_NAMES = 100   -- properties listed per class
+local MAX_LISTINGS = 2  -- a class is listed this often over the game: twice, so that what moves shows
+local listed = {}       -- class name -> times listed
 
-local function interesting(name)
-    local lower = name:lower()
-    return lower:find("radio", 1, true) or lower:find("crtv", 1, true) or lower:find("handheld", 1, true)
+local SCALAR = { BoolProperty = true, FloatProperty = true, DoubleProperty = true, IntProperty = true,
+                 Int64Property = true, ByteProperty = true, EnumProperty = true, UInt32Property = true }
+
+-- What looks like part of the CRTV's UI, by the name of its class or of the property that holds it.
+local function crtvLike(name)
+    name = name:lower()
+    for _, word in ipairs({ "widget", "wbp_", "canvas", "image", "text", "panel", "overlay", "box", "radio", "crtv", "tv",
+                            "screen", "tun", "fine", "dialoc", "needle", "zone", "band", "mini", "bink", "media" }) do
+        if name:find(word, 1, true) then return true end
+    end
+    return false
 end
 
--- The class and its parents, up to (not far above) the character class.
-local function members(object)
-    local functions, properties = {}, {}
-    local class = object:GetClass()
+-- {name, type} of the properties of the class and of its parents.
+local function properties(class)
+    local list = {}
     for _ = 1, 12 do
         if not (class and class:IsValid()) then break end
-        class:ForEachFunction(function(f)
-            local name = f:GetFName():ToString()
-            if interesting(name) then functions[#functions + 1] = name end
-        end)
-        class:ForEachProperty(function(p)
-            local name = p:GetFName():ToString()
-            if interesting(name) then properties[#properties + 1] = name end
+        class:ForEachProperty(function(property)
+            -- Its type, e.g. "ObjectProperty": from its class, or from the start of its full name.
+            local ok, kind = pcall(function() return property:GetClass():GetFName():ToString() end)
+            if not ok then
+                ok, kind = pcall(function() return property:GetFullName():match("^(%S+)") end)
+            end
+            list[#list + 1] = { property:GetFName():ToString(), ok and kind or "?" }
         end)
         class = class:GetSuperStruct()
     end
-    table.sort(functions)
-    table.sort(properties)
-    return functions, properties
+    return list
 end
 
-local function probe(pawn)
-    targets = {}
-    local anim = pawn.Mesh:GetAnimInstance()
-    for _, target in ipairs({ { "pawn", pawn }, { "anim", anim } }) do
-        local label, object = target[1], target[2]
-        local functions, properties = members(object)
-        common.log("TF-PROBE", "%s %s: functions %s", label, object:GetClass():GetFName():ToString(),
-            #functions > 0 and table.concat(functions, ", ") or "none")
-        common.log("TF-PROBE", "%s properties %s", label, #properties > 0 and table.concat(properties, ", ") or "none")
-        targets[#targets + 1] = { label = label, object = object, names = properties }
-    end
-end
-
--- Once a second, while a phone has the page open (main.lua).
-function M.update()
-    if not player.isTracking() then return end
-    local pawn = player.pawn()
-    local id = pawn:GetFullName()
-    if id ~= probedPawn then
-        probedPawn = id
-        local ok, err = pcall(probe, pawn)
-        if not ok then common.logChange("probe", "TF-PROBE", "can't list the character's members: " .. tostring(err)) end
-    end
-    local watching = 0
-    for _, target in ipairs(targets) do
-        for _, name in ipairs(target.names) do
-            watching = watching + 1
-            if watching > MAX_WATCHED then return end
-            local ok, value = pcall(function() return target.object[name] end)
-            if ok and (type(value) == "boolean" or type(value) == "number") then
-                common.logChange("probe " .. target.label .. "." .. name, "TF-PROBE",
-                    string.format("%s.%s = %s", target.label, name, tostring(value)))
+local function describe(object, list)
+    local parts = {}
+    for index, entry in ipairs(list) do
+        if index > MAX_NAMES then parts[#parts + 1] = "..."; break end
+        local name, kind = entry[1], entry[2]
+        local text = name .. ":" .. kind:gsub("Property$", "")
+        if SCALAR[kind] then
+            local ok, value = pcall(function() return object[name] end)
+            if ok and (type(value) == "number" or type(value) == "boolean") then
+                text = text .. "=" .. (type(value) == "number" and string.format("%.3g", value) or tostring(value))
             end
         end
+        parts[#parts + 1] = text
     end
+    return table.concat(parts, ", ")
+end
+
+-- `roots`: {{name, object}, ...}. The first object that has `property` (an object), or nil. `tag` names the
+-- search in the log.
+function M.explore(roots, property, tag)
+    local seen, queue, head, found = {}, {}, 1, nil
+    local function push(object, depth, path)
+        local ok, address = pcall(function() return object:GetAddress() end)
+        if ok and address and not seen[address] then
+            seen[address] = true
+            queue[#queue + 1] = { object = object, depth = depth, path = path }
+        end
+    end
+    for _, root in ipairs(roots) do
+        if root[2] then push(root[2], 0, root[1]) end
+    end
+    local failure
+    while head <= #queue and head <= MAX_OBJECTS do
+        local item = queue[head]
+        head = head + 1
+        local ok, err = pcall(function()
+            local object = item.object
+            if not object:IsValid() then return end
+            local class = object:GetClass()
+            local className = class:GetFName():ToString()
+            local list = properties(class)
+            if not found and common.member(object, property) then found = object end
+            if (listed[className] or 0) < MAX_LISTINGS then
+                listed[className] = (listed[className] or 0) + 1
+                common.log("TF-PROBE", "%s: %s (%s): %s", tag, className, item.path, describe(object, list))
+            end
+            if item.depth < MAX_DEPTH then
+                for _, entry in ipairs(list) do
+                    if (entry[2] == "?" or entry[2]:find("Object", 1, true)) and crtvLike(entry[1]) then
+                        local child = common.member(object, entry[1])
+                        if child then push(child, item.depth + 1, item.path .. "." .. entry[1]) end
+                    end
+                end
+            end
+        end)
+        failure = failure or (not ok and err or nil)
+    end
+    if failure then common.logChange("probe", "TF-PROBE", tag .. ": couldn't look through some objects: " .. tostring(failure)) end
+    return found
 end
 
 return M

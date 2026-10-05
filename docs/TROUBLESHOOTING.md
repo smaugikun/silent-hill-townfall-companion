@@ -127,21 +127,23 @@ not one you raised with the controller or keyboard.
 
 ### The CRTV stays on the monitor, or the hands stay up, after leaving VIEW
 
-The phone asks your character to put the CRTV away the way the controller does, so the radio and his hands go
-down together. If the game doesn't carry that out, the phone asks again, forcing it: the radio then goes at
-once, and the mod stops a leftover radio animation so the hands follow. Report what `UE4SS.log` says:
-
-- `[TF-CRTV] phone command: active=false (animated)`, and whether the CRTV changed after it,
-- `[TF-CRTV] CRTV lowered ...`: what was playing on the character when the radio went (the animation that holds
-  his hands up, or that none is),
-- the `[TF-PROBE]` lines: what the game keeps about the radio on the character, and when it changes.
+Your character needs about a second to raise the CRTV and half a second to lower it, and he drops a request
+that comes in the middle of either. So the phone's request is kept and carried out when he is ready: a lowering
+waits for the raise to finish, a raise for the lowering to finish, and the last thing you asked for wins.
+Flicking the selector fast therefore shows a full raise and lowering, not a half one. Lowering is asked for the
+way the controller does it (radio and hands go down together); only if he hasn't done it after 3 seconds is it
+forced, which makes the radio vanish at once and lets the hands lag. If it still goes wrong, report the
+`[TF-CRTV] phone command: ...` lines around it, and `the character didn't carry out the phone's request:
+dropped` if that is there.
 
 ### The fine-tune mini-game shows on the monitor but not on the phone
 
-The mod looks for the game's mini-game screen while you are tuned to a waypoint that isn't found yet.
-`UE4SS.log` has `[TF-CRTV] mini-game widget: ...` once it finds it. If it says `mini-game expected, none sent to
-the phone:` or `no user widget of N has a fine-tune canvas`, report that line (it names the widgets that look
-like the CRTV's screen), with the `[TF-CRTV] fine tune "..."` line near it.
+The game keeps the mini-game's screen in an object the mod doesn't know yet. While you are tuned to a waypoint
+that isn't found yet, the mod looks through the CRTV's widget, the radio and its actor for it, and lists what it
+meets as `[TF-PROBE] mini-game: ...` lines in `UE4SS.log` (a flag or number comes with its value then).
+`[TF-CRTV] mini-game widget: ...` says it found the screen. If it says `no object held by the CRTV's widget, the
+radio or its actor has a fine-tune canvas`, report the `[TF-PROBE] mini-game:` lines: they name what the screen
+is made of.
 
 ### A signal's voice is heard only in the game
 

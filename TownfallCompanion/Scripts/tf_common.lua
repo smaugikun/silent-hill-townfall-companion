@@ -33,6 +33,13 @@ function M.optional(channel, tag, fn, fallback)
     return fallback
 end
 
+-- An object's property that may not exist on it (UE4SS answers nil or throws, by build): the object it holds, or nil.
+function M.member(object, name)
+    local ok, value = pcall(function() return object[name] end)
+    local kind = type(value)
+    if ok and (kind == "userdata" or kind == "table") and value.IsValid and value:IsValid() then return value end
+end
+
 -- A number the game may not give: fn's result, or nil if it fails or isn't a number.
 function M.tryNumber(fn)
     local ok, n = pcall(fn)

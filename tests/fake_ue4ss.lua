@@ -3,7 +3,7 @@
 -- real game showed. Returns a constructor used by test_mod.py.
 
 return function(scriptsDir, tempDir, options)
-    local world = { logs = {}, findAllOfCalls = 0, findAllOfUserWidgets = 0, staticFindCalls = 0 } -- findAllOfCalls counts enemy walks
+    local world = { logs = {}, findAllOfCalls = 0, staticFindCalls = 0, radioActorCalls = 0 } -- findAllOfCalls counts enemy walks
     local loops, enemies, waypoints = {}, {}, {}
     local notify = {} -- class path -> NotifyOnNewObject callback
     local ENEMY_CLASS = "/Script/Townfall.TownfallEnemyCharacter"
@@ -44,6 +44,31 @@ return function(scriptsDir, tempDir, options)
         t.IsValid = function(self) return not self.destroyed end
         t.GetAddress = function(self) return self.address end
         t.GetFullName = t.GetFullName or function(self) return self.fullName or ("FakeObject_" .. self.address) end
+        -- The class of a fake object lists its own fields as properties (an object field is an ObjectProperty).
+        t.GetClass = t.GetClass or function(self)
+            local function property(name, value)
+                local kind = type(value) == "table" and value.IsValid and "ObjectProperty"
+                    or type(value) == "boolean" and "BoolProperty" or "FloatProperty"
+                return { GetFName = function() return { ToString = function() return name end } end,
+                         GetClass = function() return { GetFName = function() return { ToString = function() return kind end } end } end }
+            end
+            return {
+                IsValid = function() return true end,
+                GetFName = function() return { ToString = function() return (self.fullName or "FakeClass"):match("^(%S+)") end } end,
+                ForEachProperty = function(_, visit)
+                    local names = {}
+                    for name, value in pairs(self) do
+                        local kind = type(value)
+                        if type(name) == "string" and (kind == "number" or kind == "boolean" or (kind == "table" and value.IsValid)) then
+                            names[#names + 1] = name
+                        end
+                    end
+                    table.sort(names)
+                    for _, name in ipairs(names) do visit(property(name, self[name])) end
+                end,
+                GetSuperStruct = function() return CreateInvalidObject() end,
+            }
+        end
         return t
     end
 
@@ -116,13 +141,11 @@ return function(scriptsDir, tempDir, options)
             or path == MEDIA_CLASSES.bink or path == MEDIA_CLASSES.media, "unexpected NotifyOnNewObject " .. path)
         notify[path] = fn
     end
-    local userWidgets = {} -- every UUserWidget: the CRTV's screen widget, and the one with the mini-game (world.splitMiniGame)
     local instances = { TownfallEnemyCharacter = enemies, RadioWaypointSourceComponent = waypoints,
-                        LevelSequencePlayer = sequencePlayers, UserWidget = userWidgets }
+                        LevelSequencePlayer = sequencePlayers }
     function FindAllOf(cls)
         local list = assert(instances[cls], "unexpected FindAllOf " .. cls)
         if cls == "TownfallEnemyCharacter" then world.findAllOfCalls = world.findAllOfCalls + 1 end
-        if cls == "UserWidget" then world.findAllOfUserWidgets = world.findAllOfUserWidgets + 1 end
         local found = {}
         for _, o in ipairs(list) do
             if o:IsValid() then found[#found + 1] = o end
@@ -204,9 +227,10 @@ return function(scriptsDir, tempDir, options)
         pawn.bInInterior = false
         local born = worldTime
         pawn.GetGameTimeSinceCreation = function() return worldTime - born end
-        local radio = {
+        local radio = object({
             active = false, frequency = 0, cachedHighestSignalStrength = 0, cachedHighestStrengthSignalType = 0,
-        }
+            fullName = "HandheldRadio_C /Game/Townfall/Radio.HandheldRadio_C",
+        })
         -- The CRTV screen (UCRTVWidget) and its two Bink players; world.playVideo starts one.
         local function binkPlayer()
             return object({
@@ -240,24 +264,22 @@ return function(scriptsDir, tempDir, options)
             Image_NarrowBand = uiImage("band"), Image_DigitalNeedle = uiImage("box"), Image_FineTuneZone = uiImage("zone"),
             DialocTextBlock_FineTune = object({ GetText = function() return fstring(tuneUi.text) end }),
         })
-        userWidgets[#userWidgets + 1] = widget
         widget.fullName = "WBP_CRTV_C /Game/Townfall/UI/WBP_CRTV.WBP_CRTV_C"
         -- The game keeps the mini-game on another widget than the one that plays the CRTV's videos (UE4SS.log
-        -- 2026-10-06): this moves the fake's canvas, bar, box and diamond over to a widget of their own.
+        -- 2026-10-06): this moves the fake's canvas, bar, box and diamond over to a widget the CRTV's widget holds.
         function world.splitMiniGame()
             local other = object({ fullName = "WBP_PortableTVScreen_C /Game/Townfall/UI/WBP_PortableTVScreen.WBP_PortableTVScreen_C" })
             for _, key in ipairs({ "Canvas_FineTuning", "Image_NarrowBand", "Image_DigitalNeedle", "Image_FineTuneZone",
                                    "DialocTextBlock_FineTune" }) do
                 other[key], widget[key] = widget[key], nil
             end
-            userWidgets[#userWidgets + 1] = other
+            widget.MiniGameScreen = other
             world.miniGameWidget = other
             return other
         end
         widget.WaypointVideoAudioComponent = fmodSound()
         radio.staticAudioComponent = fmodSound()
         pawn.SFX_CRTV = fmodSound()
-        radio.IsValid = function() return true end
         radio.GetCRTVWidget = function() return widget end
         radio.confirms = 0
         radio.PlayerInput_FineTuneConfirm_Pressed = function() radio.confirms = radio.confirms + 1 end
@@ -274,41 +296,26 @@ return function(scriptsDir, tempDir, options)
         end
         radio.SetTunedFrequency = function(self, frequency) radio.frequency = frequency end
         pawn.SetRadioInActiveMode = function(self, active) radio.active = active end
+        -- What the character keeps about the radio (UE4SS.log 2026-10-06): IsUsingRadio, and RadioAlpha on his
+        -- animation (the hands). The requests move both at once unless radio.ignoreRequests; a test that wants
+        -- a raise or lowering half done sets them itself.
+        local anim = object({ RadioAlpha = 0 })
+        pawn.IsUsingRadio = false
         -- BP_Bill's own requests, what the controller's L1 runs; `noRadioRequests`: a build without them.
         radio.requests = {}
         if not options.noRadioRequests then
-            pawn.RequestRadioON = function() radio.requests[#radio.requests + 1] = "on"; if not radio.ignoreRequests then radio.active = true end end
+            pawn.RequestRadioON = function()
+                radio.requests[#radio.requests + 1] = "on"
+                if not radio.ignoreRequests then radio.active, pawn.IsUsingRadio, anim.RadioAlpha = true, true, 1 end
+            end
             pawn.RequestRadioOFF = function(self, force)
                 radio.requests[#radio.requests + 1] = force and "off (forced)" or "off"
-                if not radio.ignoreRequests then radio.active = false end
+                if not radio.ignoreRequests then radio.active, pawn.IsUsingRadio, anim.RadioAlpha = false, false, 0 end
             end
         end
         pawn.GetIsRadioInActiveMode = function() return radio.active end
-        -- What the character's mesh plays: world.setMontage(name) starts a montage, nil ends it. Montage_Stop
-        -- records what was stopped. world.anim has a flag of its own for the probe to read.
-        local anim = object({ stops = {}, bHoldingRadio = false })
-        anim.GetCurrentActiveMontage = function(self) return self.montage or CreateInvalidObject() end
-        anim.Montage_Stop = function(self, blend, montage)
-            self.stops[#self.stops + 1] = montage:GetFullName()
-            if self.montage == montage then self.montage = nil end
-        end
-        function world.setMontage(name)
-            anim.montage = name and object({ fullName = name }) or nil
-        end
-        local function fakeClass(name, functions, properties)
-            local function names(list, fn)
-                return function(self, visit) for _, n in ipairs(list) do visit({ GetFName = function() return { ToString = function() return n end } end }) end end
-            end
-            return object({
-                GetFName = function() return { ToString = function() return name end } end,
-                ForEachFunction = names(functions), ForEachProperty = names(properties),
-                GetSuperStruct = function() return CreateInvalidObject() end,
-            })
-        end
-        anim.GetClass = function() return fakeClass("ABP_Bill_C", {}, { "bHoldingRadio", "Speed" }) end
-        pawn.bRadioRaised = false
-        pawn.GetClass = function() return fakeClass("BP_Bill_C", { "RequestRadioON", "RequestRadioOFF", "Jump" },
-            { "bRadioRaised", "Health" }) end
+        -- The radio's actor isn't modelled; the mod asks for it once per look for the mini-game's screen.
+        pawn.GetRadioActor = function() world.radioActorCalls = world.radioActorCalls + 1; return nil end
         pawn.Mesh = object({ GetAnimInstance = function() return anim end })
         world.anim = anim
         pawn.GetRadioCurrentTunedFrequency = function() return radio.frequency end
