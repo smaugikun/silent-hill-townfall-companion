@@ -3,7 +3,7 @@
 -- real game showed. Returns a constructor used by test_mod.py.
 
 return function(scriptsDir, tempDir, options)
-    local world = { logs = {}, findAllOfCalls = 0, staticFindCalls = 0, radioActorCalls = 0 } -- findAllOfCalls counts enemy walks
+    local world = { logs = {}, findAllOfCalls = 0, staticFindCalls = 0 } -- findAllOfCalls counts enemy walks
     local loops, enemies, waypoints = {}, {}, {}
     local notify = {} -- class path -> NotifyOnNewObject callback
     local ENEMY_CLASS = "/Script/Townfall.TownfallEnemyCharacter"
@@ -44,31 +44,6 @@ return function(scriptsDir, tempDir, options)
         t.IsValid = function(self) return not self.destroyed end
         t.GetAddress = function(self) return self.address end
         t.GetFullName = t.GetFullName or function(self) return self.fullName or ("FakeObject_" .. self.address) end
-        -- The class of a fake object lists its own fields as properties (an object field is an ObjectProperty).
-        t.GetClass = t.GetClass or function(self)
-            local function property(name, value)
-                local kind = type(value) == "table" and value.IsValid and "ObjectProperty"
-                    or type(value) == "boolean" and "BoolProperty" or "FloatProperty"
-                return { GetFName = function() return { ToString = function() return name end } end,
-                         GetClass = function() return { GetFName = function() return { ToString = function() return kind end } end } end }
-            end
-            return {
-                IsValid = function() return true end,
-                GetFName = function() return { ToString = function() return (self.fullName or "FakeClass"):match("^(%S+)") end } end,
-                ForEachProperty = function(_, visit)
-                    local names = {}
-                    for name, value in pairs(self) do
-                        local kind = type(value)
-                        if type(name) == "string" and (kind == "number" or kind == "boolean" or (kind == "table" and value.IsValid)) then
-                            names[#names + 1] = name
-                        end
-                    end
-                    table.sort(names)
-                    for _, name in ipairs(names) do visit(property(name, self[name])) end
-                end,
-                GetSuperStruct = function() return CreateInvalidObject() end,
-            }
-        end
         return t
     end
 
@@ -152,9 +127,6 @@ return function(scriptsDir, tempDir, options)
         end
         return #found > 0 and found or nil
     end
-    -- FindFirstOf: the first instance of a class; tests register one in world.firstOf[class].
-    world.firstOf = {}
-    function FindFirstOf(cls) return world.firstOf[cls] end
     function LoopInGameThreadWithDelay(ms, fn)
         loops[#loops + 1] = { ms = ms, fn = fn }
         return #loops
@@ -245,8 +217,9 @@ return function(scriptsDir, tempDir, options)
         end
         -- Its fine-tune mini-game: the bar, the box running along it and the diamond, each an image in
         -- a canvas slot (x/w, the slots' alignment) with a render offset (t.X). Tests change world.fineTuneUi.
+        -- The widget has no canvas of its own for it (UE4SS.log 2026-10-06): the game's state says when it runs.
         local tuneUi = {
-            visible = false, text = "FINE TUNE - SEARCHING", align = 0,
+            text = "FINE TUNE - SEARCHING", align = 0,
             band = { x = 100, w = 400, t = { X = 0, Y = 0 } },
             box = { x = 100, w = 20, t = { X = 0, Y = 0 } },
             zone = { x = 285, w = 30, t = { X = 0, Y = 0 } },
@@ -263,23 +236,10 @@ return function(scriptsDir, tempDir, options)
         end
         local widget = object({
             EnemyVideoPlayer_Bink = binkPlayer(), WaypointVideoPlayer_Bink = binkPlayer(),
-            Canvas_FineTuning = object({ IsVisible = function() return tuneUi.visible end }),
             Image_NarrowBand = uiImage("band"), Image_DigitalNeedle = uiImage("box"), Image_FineTuneZone = uiImage("zone"),
             DialocTextBlock_FineTune = object({ GetText = function() return fstring(tuneUi.text) end }),
         })
         widget.fullName = "WBP_CRTV_C /Game/Townfall/UI/WBP_CRTV.WBP_CRTV_C"
-        -- The game keeps the mini-game on another widget than the one that plays the CRTV's videos (UE4SS.log
-        -- 2026-10-06): this moves the fake's canvas, bar, box and diamond over to a widget the CRTV's widget holds.
-        function world.splitMiniGame()
-            local other = object({ fullName = "WBP_PortableTVScreen_C /Game/Townfall/UI/WBP_PortableTVScreen.WBP_PortableTVScreen_C" })
-            for _, key in ipairs({ "Canvas_FineTuning", "Image_NarrowBand", "Image_DigitalNeedle", "Image_FineTuneZone",
-                                   "DialocTextBlock_FineTune" }) do
-                other[key], widget[key] = widget[key], nil
-            end
-            widget.MiniGameScreen = other
-            world.miniGameWidget = other
-            return other
-        end
         widget.WaypointVideoAudioComponent = fmodSound()
         radio.staticAudioComponent = fmodSound()
         pawn.SFX_CRTV = fmodSound()
@@ -317,8 +277,6 @@ return function(scriptsDir, tempDir, options)
             end
         end
         pawn.GetIsRadioInActiveMode = function() return radio.active end
-        -- The radio's actor isn't modelled; the mod asks for it once per look for the mini-game's screen.
-        pawn.GetRadioActor = function() world.radioActorCalls = world.radioActorCalls + 1; return nil end
         pawn.Mesh = object({ GetAnimInstance = function() return anim end })
         world.anim = anim
         pawn.GetRadioCurrentTunedFrequency = function() return radio.frequency end

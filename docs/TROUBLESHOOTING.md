@@ -138,12 +138,12 @@ dropped` if that is there.
 
 ### The fine-tune mini-game shows on the monitor but not on the phone
 
-The game keeps the mini-game's screen in an object the mod doesn't know yet. While you are tuned to a waypoint
-that isn't found yet, the mod looks through the CRTV's widget, the radio and its actor for it, and lists what it
-meets as `[TF-PROBE] mini-game: ...` lines in `UE4SS.log` (a flag or number comes with its value then).
-`[TF-CRTV] mini-game widget: ...` says it found the screen. If it says `no object held by the CRTV's widget, the
-radio or its actor has a fine-tune canvas`, report the `[TF-PROBE] mini-game:` lines: they name what the screen
-is made of.
+The mod sends the mini-game while the CRTV is tuned to a waypoint that isn't found yet, reading the bar, the box and
+the diamond from the CRTV's screen. If the phone still shows only static then, `UE4SS.log` says why, in lines
+starting with `[TF-CRTV] mini-game expected, none sent to the phone:` (the screen has no bar, box or diamond, the
+bar has no width, or the box has no position), or `fine tune error`. If the box on the phone doesn't move with the
+one on the monitor, report the `[TF-CRTV] fine tune "..."` lines: they show the bar, box and diamond as the game
+reports them, about every two seconds.
 
 ### A signal's voice is heard only in the game
 

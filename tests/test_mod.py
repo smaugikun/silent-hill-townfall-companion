@@ -299,10 +299,12 @@ class CrtvScreenTest(ModTest):
         self.world.playVideo("EnemyVideoPlayer_Bink", None)
         self.assertIsNone(self.crtv()["video"])  # not the waypoint's in its place
 
+    # The mini-game runs while the CRTV is tuned to a waypoint that isn't found yet (signal type 0). The screen's
+    # widget has no canvas of its own for it, only the bar, the box, the diamond and the text (UE4SS.log 2026-10-06).
     def test_fine_tune_positions_along_the_bar(self):
-        self.assertIsNone(self.crtv()["fineTune"])
+        self.assertIsNone(self.crtv()["fineTune"])  # nothing tuned in
+        self.tune(0)
         ui = self.world.fineTuneUi
-        ui["visible"] = True
         ui["box"]["x"] = 190  # 20 wide: centre 200 of the bar's 100-500
         tune = self.crtv()["fineTune"]
         self.assertEqual(tune, {"box": 0.25, "zone": 0.5, "text": "FINE TUNE - SEARCHING"})
@@ -310,101 +312,51 @@ class CrtvScreenTest(ModTest):
                                      'diamond 285.0+30.0'), 1)
 
     def test_fine_tune_with_centred_slots_and_a_moving_box(self):
+        self.tune(0)
         ui = self.world.fineTuneUi
-        ui["visible"], ui["align"] = True, 0.5  # slot positions are then the centres
+        ui["align"] = 0.5  # slot positions are then the centres
         ui["band"]["x"], ui["box"]["x"], ui["zone"]["x"] = 300, 200, 300
         ui["box"]["t"]["X"] = 50  # the widget moves the box by its render offset: centre 250 of 100-500
         tune = self.crtv()["fineTune"]
         self.assertEqual((tune["box"], tune["zone"]), (0.375, 0.5))
 
-    def test_a_mini_game_the_phone_doesnt_get_is_logged_when_the_game_should_be_running_it(self):
-        self.tune(0)  # on a waypoint's channel, not found yet: the game runs the mini-game
-        self.assertIsNone(self.crtv()["fineTune"])
-        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the fine-tune canvas isn't shown"), 1)
-        self.world.tick(3)
-        self.assertEqual(self.logged("mini-game expected"), 1)  # once, not on every sample
-        self.world.fineTuneUi["visible"] = True
-        self.assertIsNotNone(self.crtv()["fineTune"])
-        self.world.fineTuneUi["visible"] = False
-        self.assertIsNone(self.crtv()["fineTune"])
-        self.assertEqual(self.logged("mini-game expected"), 2)  # and again when it goes missing again
+    def test_the_mini_game_is_only_sent_while_the_game_runs_it(self):
+        self.world.fineTuneUi["box"]["x"] = 190  # the widget always has its members
+        for signal, sent in ((None, False), (2, False), (0, True), (1, False), (None, False), (0, True)):
+            self.tune(signal)
+            self.assertEqual(self.crtv()["fineTune"] is not None, sent, f"signal {signal}")
+        self.assertEqual(self.logged("mini-game expected"), 0)  # and nothing is wrong while it isn't due
 
-    def test_the_mini_game_is_found_on_the_widget_that_has_it(self):
-        # The game's CRTV screen widget plays the videos; the mini-game's canvas is on a widget it holds.
-        self.world.splitMiniGame()
-        self.tune(0)  # on a waypoint's channel, not found yet
-        ui = self.world.fineTuneUi
-        ui["visible"] = True
-        ui["box"]["x"] = 190
-        self.assertEqual(self.crtv()["fineTune"], {"box": 0.25, "zone": 0.5, "text": "FINE TUNE - SEARCHING"})
-        self.assertEqual(self.logged("[TF-CRTV] mini-game widget: WBP_PortableTVScreen_C"), 1)
-        self.assertEqual(self.logged("mini-game expected"), 0)
-        self.world.tick(5)
-        self.assertEqual(self.world.radioActorCalls, 1)  # looked for once, then the widget is kept
-        self.assertIsNotNone(self.telemetry()["crtv"]["fineTune"])
-
-    def test_the_mini_game_class_the_author_named_is_looked_up_directly(self):
-        # Not held by anything the mod reaches: found by its class name.
-        other = self.world.splitMiniGame()
-        self.world.crtvWidget["MiniGameScreen"] = None
-        self.world.firstOf["WBP_PortableTVScreen_C"] = other
+    def test_the_box_moving_does_not_flood_the_log(self):
         self.tune(0)
-        self.world.fineTuneUi["visible"] = True
-        self.assertIsNotNone(self.crtv()["fineTune"])
-        self.assertEqual(self.logged("[TF-CRTV] mini-game widget: WBP_PortableTVScreen_C"), 1)
-
-    def test_the_search_lists_what_it_meets_in_the_log(self):
-        self.world.splitMiniGame()
-        self.tune(0)
-        self.world.fineTuneUi["visible"] = True
+        for step in range(7):
+            self.world.fineTuneUi["box"]["x"] = 100 + 40 * step  # it moves every sample
+            self.crtv()
+        lines = self.logged('[TF-CRTV] fine tune "FINE TUNE - SEARCHING"')
+        self.assertTrue(1 <= lines <= 4, lines)  # the first, then about every two seconds
+        self.world.fineTuneUi["band"]["w"] = 380  # the bar changed: that is logged at once
         self.crtv()
-        listed = [line for line in self.logs() if "[TF-PROBE] mini-game: " in line]
-        by_class = {line.split("mini-game: ")[1].split(" ")[0]: line for line in listed}
-        # The radio, the CRTV's widget and the widget it holds, and what those hold that looks like part of the UI.
-        self.assertTrue({"HandheldRadio_C", "WBP_CRTV_C", "WBP_PortableTVScreen_C"} <= set(by_class), listed)
-        self.assertIn("(CRTVWidget.MiniGameScreen)", by_class["WBP_PortableTVScreen_C"])
-        self.assertIn("Canvas_FineTuning:Object", by_class["WBP_PortableTVScreen_C"])
-        self.assertIn("active:Bool=true", by_class["HandheldRadio_C"])  # a flag with its value now
-        self.assertIn("frequency:Float=", by_class["HandheldRadio_C"])
+        self.assertEqual(self.logged('[TF-CRTV] fine tune "FINE TUNE - SEARCHING": bar 100.0+380.0'), 1)
 
-    def test_the_mini_game_widget_is_not_looked_for_while_none_is_due(self):
-        self.world.splitMiniGame()
-        self.world.fineTuneUi["visible"] = True
-        self.tune(2)
-        self.assertIsNone(self.crtv()["fineTune"])
-        self.assertEqual(self.world.radioActorCalls, 0)
-        self.assertEqual(self.logged("[TF-PROBE]"), 0)
-
-    def test_without_any_object_having_the_canvas_the_log_says_so(self):
-        self.world.splitMiniGame()["Canvas_FineTuning"] = None  # nothing has it now
+    def test_a_widget_without_the_bar_box_or_diamond_is_logged_once(self):
+        self.world.crtvWidget["Image_FineTuneZone"] = None
         self.tune(0)
         self.assertIsNone(self.crtv()["fineTune"])
-        self.assertEqual(self.logged("no object held by the CRTV's widget, the radio or its actor has a fine-tune canvas"), 1)
-        self.assertGreater(self.logged("[TF-PROBE] mini-game: "), 0)
-
-    def test_the_search_isnt_repeated_every_sample(self):
-        self.world.splitMiniGame()["Canvas_FineTuning"] = None
-        self.tune(0)
-        for _ in range(4):
-            self.world.tick(1)
-        self.assertIn(self.world.radioActorCalls, (1, 2))  # at most once every few seconds
+        self.world.tick(3)
+        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the CRTV's screen widget has no "
+                                     "fine-tune bar, box or diamond"), 1)
 
     def test_a_fine_tune_bar_without_width_is_logged(self):
         self.tune(0)
-        ui = self.world.fineTuneUi
-        ui["visible"] = True
-        ui["band"]["w"] = 0
+        self.world.fineTuneUi["band"]["w"] = 0
         self.assertIsNone(self.crtv()["fineTune"])
         self.assertEqual(self.logged("mini-game expected, none sent to the phone: the bar has no width"), 1)
 
-    def test_no_complaint_about_the_mini_game_while_none_is_due(self):
-        self.tune(2)  # an enemy
-        self.crtv()
-        self.tune(None)  # nothing tuned in
-        self.crtv()
-        self.tune(1)  # a waypoint found: the mini-game is over
-        self.crtv()
-        self.assertEqual(self.logged("mini-game expected"), 0)
+    def test_a_box_without_a_position_is_not_sent_as_invalid_json(self):
+        self.tune(0)
+        self.world.fineTuneUi["box"]["x"] = float("inf")
+        self.assertIsNone(self.crtv()["fineTune"])  # telemetry stays readable: crtv() parsed the whole file
+        self.assertEqual(self.logged("the box or diamond has no position"), 1)
 
     def test_nothing_while_lowered_or_stopped(self):
         self.tune(2)

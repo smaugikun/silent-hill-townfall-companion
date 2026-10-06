@@ -5,7 +5,6 @@
 
 local common = require("tf_common")
 local player = require("tf_player")
-local probe = require("tf_probe")
 
 -- ERadioSignalFMODType from Townfall_enums.hpp
 local SIGNAL_TYPES = { [0] = "waypoint", "waypoint_tuned", "enemy", "walk_and_talk" }
@@ -64,77 +63,47 @@ end
 
 local member = common.member
 
--- The mini-game's screen isn't the widget that plays the CRTV's videos: UE4SS.log 2026-10-06 shows that widget
--- without a Canvas_FineTuning, with the CRTV raised by the phone and by the controller, and no user widget among
--- the 132-144 the game had has one either. The mod looks through what the CRTV's widget, the radio and the radio's
--- actor hold for an object that has it (tf_probe.lua), and lists what it meets in the log, so that what the
--- mini-game's screen is made of can be read from there. A look is a few ms of the game thread: not more often
--- than SCAN_GAP_S, only while the game should be running the mini-game, and the widget found is kept while it
--- lives and shows its canvas.
-local SCAN_GAP_S = 3
-local tuneWidget, lastScan = nil, -math.huge
-
-local function showsMiniGame(widget)
-    local canvas = widget and widget:IsValid() and member(widget, "Canvas_FineTuning")
-    return canvas and canvas:IsVisible()
-end
-
-local function findMiniGame(radio)
-    if showsMiniGame(tuneWidget) then return tuneWidget end
-    if os.clock() - lastScan < SCAN_GAP_S then return nil end
-    lastScan = os.clock()
-    local pawn = player.pawn()
-    local function held(read)
-        local ok, object = pcall(read)
-        return ok and object or nil
-    end
-    tuneWidget = probe.explore({
-        { "CRTVWidget", held(function() return radio:GetCRTVWidget() end) },
-        { "Radio", radio },
-        { "RadioActor", held(function() return pawn:GetRadioActor() end) },
-        { "HandheldRadio", held(function() return pawn.HandheldRadio end) },
-        -- The class the mod's author named for the mini-game's screen (from the game's SDK dump).
-        { "WBP_PortableTVScreen_C", held(function() return FindFirstOf("WBP_PortableTVScreen_C") end) },
-    }, "Canvas_FineTuning", "mini-game")
-    if tuneWidget then
-        common.logChange("fine tune widget", "TF-CRTV", "mini-game widget: " .. tostring(tuneWidget:GetFullName()))
-    else
-        common.logChange("fine tune widget", "TF-CRTV", "no object held by the CRTV's widget, the radio or its actor has a "
-            .. "fine-tune canvas; the classes met are listed in [TF-PROBE] lines")
-    end
-    return showsMiniGame(tuneWidget) and tuneWidget or nil
-end
-
 -- `expected`: the CRTV is tuned to a waypoint that isn't found yet, which is when the game runs the mini-game
--- (signal type "waypoint", the phone's F key finds it). If the screen then doesn't read as showing it, the phone
--- has none to show while the monitor has: the log says which read comes back empty.
+-- (signal type "waypoint"; the phone's F key finds it). That state is the switch: the screen's widget
+-- (WBP_PortableTVScreen_C) has no canvas of its own for the mini-game to look at (UE4SS.log 2026-10-06: no
+-- Canvas_FineTuning, so the mod never sent it), but it has the bar, the box and the diamond as members, and the text.
+local FINE_LOG_S = 2 -- the box moves every sample: its numbers are logged this often, or when the bar, diamond or text change
+local fineLog = { key = nil, at = -math.huge }
+
 local function fineTune(radio, expected)
+    if not expected then
+        common.clearChannel("fine tune read")
+        return nil
+    end
     local function nothing(why)
-        if expected then common.logChange("fine tune read", "TF-CRTV", "mini-game expected, none sent to the phone: " .. why) end
+        common.logChange("fine tune read", "TF-CRTV", "mini-game expected, none sent to the phone: " .. why)
         return nil
     end
     local widget = radio:GetCRTVWidget()
-    local canvas = widget and widget:IsValid() and member(widget, "Canvas_FineTuning")
-    if expected and not (canvas and canvas:IsVisible()) then
-        local found = findMiniGame(radio)
-        if found then widget, canvas = found, member(found, "Canvas_FineTuning") end
+    if not (widget and widget:IsValid()) then return nothing("the CRTV has no screen widget") end
+    local band, needle, zone = member(widget, "Image_NarrowBand"), member(widget, "Image_DigitalNeedle"),
+        member(widget, "Image_FineTuneZone")
+    if not (band and needle and zone) then
+        return nothing("the CRTV's screen widget has no fine-tune bar, box or diamond")
     end
-    if not canvas then return nothing("no object has a fine-tune canvas (the CRTV's screen widget has none)") end
-    if not canvas:IsVisible() then return nothing("the fine-tune canvas isn't shown") end
-    local bandX, bandW = slotSpan(widget.Image_NarrowBand)
-    local boxX, boxW = slotSpan(widget.Image_DigitalNeedle)
-    local zoneX, zoneW = slotSpan(widget.Image_FineTuneZone)
+    local bandX, bandW = slotSpan(band)
+    local boxX, boxW = slotSpan(needle)
+    local zoneX, zoneW = slotSpan(zone)
     local ok, text = pcall(function() return common.str(widget.DialocTextBlock_FineTune:GetText()) end)
     text = ok and text or ""
-    common.logChange("fine tune", "TF-CRTV", string.format("fine tune \"%s\": bar %.1f+%.1f box %.1f+%.1f diamond %.1f+%.1f",
-        text, bandX, bandW, boxX, boxW, zoneX, zoneW))
-    if bandW <= 0 then return nothing("the bar has no width") end
+    local now = os.clock()
+    local key = string.format("%s|%.1f|%.1f|%.1f|%.1f", text, bandX, bandW, zoneX, zoneW)
+    if key ~= fineLog.key or now - fineLog.at >= FINE_LOG_S then
+        fineLog.key, fineLog.at = key, now
+        common.log("TF-CRTV", "fine tune \"%s\": bar %.1f+%.1f box %.1f+%.1f diamond %.1f+%.1f",
+            text, bandX, bandW, boxX, boxW, zoneX, zoneW)
+    end
+    if not (bandW > 0) then return nothing("the bar has no width") end
+    local box, diamond = (boxX + boxW / 2 - bandX) / bandW, (zoneX + zoneW / 2 - bandX) / bandW
+    -- inf or nan would not be JSON: the whole telemetry file would be unreadable.
+    if not (math.abs(box) < 1e6 and math.abs(diamond) < 1e6) then return nothing("the box or diamond has no position") end
     common.clearChannel("fine tune read")
-    return {
-        box = (boxX + boxW / 2 - bandX) / bandW,
-        zone = (zoneX + zoneW / 2 - bandX) / bandW,
-        text = text,
-    }
+    return { box = box, zone = diamond, text = text }
 end
 
 local function radioManager()
@@ -339,7 +308,6 @@ function M.json(state)
         video, seconds = playingVideo(radio, state.type)
         local expected = state.type == "waypoint"
         tune = common.optional("fine tune error", "TF-CRTV", function() return fineTune(radio, expected) end, nil)
-        if not expected then common.clearChannel("fine tune read") end
     end
     return string.format('{"active":%s,"frequency":%.3f,"signalType":"%s","video":%s,"videoTime":%s,'
         .. '"fineTune":%s,"needleColours":%s}',
