@@ -108,6 +108,15 @@
       <button id="testVibration" class="action">Test vibration</button>
       <p id="vibrationNote" class="note"></p>
 
+      <h3>Bug reports</h3>
+      <label class="row"><span>Record the CRTV screen</span><input id="setRecord" type="checkbox" /></label>
+      <p class="note">
+        While this is on, the mod writes what the game's CRTV screen does (every mini-game, the radio's numbers, your
+        presses) to <b>townfall-ui-recording.txt</b> in the mod's folder (TownfallCompanion). Switch it on, play the
+        CRTV, switch it off, and send the file with a bug report. It costs a little game speed while on, and stops by
+        itself after 15 minutes or when this page closes.
+      </p>
+
       <h3>Status</h3>
       <dl class="status">
         <dt>Bridge</dt><dd id="stBridge">—</dd>
@@ -120,6 +129,7 @@
         <dt>Sound</dt><dd id="stSound">—</dd>
         <dt>Cutscene</dt><dd id="stCutscene">—</dd>
         <dt>Talking</dt><dd id="stTalk">—</dd>
+        <dt>Recording</dt><dd id="stRecord">—</dd>
       </dl>
       <p id="secureHint" class="note hint" hidden>
         Turning the phone, Auto pickup and keeping the screen on need a secure page: in Chrome, open

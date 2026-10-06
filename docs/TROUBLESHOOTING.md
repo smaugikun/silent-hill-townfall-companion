@@ -143,8 +143,8 @@ the diamond from the CRTV's screen. If the phone still shows only static then, `
 starting with `[TF-CRTV] mini-game expected, none sent to the phone:` (the screen has no bar, box or diamond, the
 bar has no width, or the box has no position), or `fine tune error`.
 
-If the box on the phone doesn't move like the one on the monitor (it jumps, stops, or leaves the bar), report the
-`[TF-CRTV] fine tune trace ...` lines: they are the box's real positions, a few seconds of them from the start of
+If the box on the phone doesn't move like the one on the monitor (it jumps, stops, or leaves the bar), record it
+(see *Recording the CRTV screen*) or report the `[TF-CRTV] fine tune trace ...` lines: they are the box's real positions, a few seconds of them from the start of
 each mini-game, and the phone fits its bar to them after one round. `[TF-CRTV] fine tune "..."` lines show the bar,
 box and diamond as the game reports them, about every two seconds.
 
@@ -211,6 +211,20 @@ package. If that still prints this line, report it on [the mod's Nexus page](htt
 
 Every 30 s the log has a `[TF-PERF]` line: how many ms per second of the game's time the mod used. Normal is
 about 25 ms per second or less. Much more? Please report it with that line.
+
+## Recording the CRTV screen for a bug report
+
+The CRTV has more mini-games than the mod can show on the phone yet, and a bug in one of them can't be fixed
+without seeing what the game's screen does. On the phone: Settings → *Bug reports* → *Record the CRTV screen*.
+While it is on, the mod writes **`townfall-ui-recording.txt`** in its folder (`...\Mods\TownfallCompanion\`, where the
+log line `[TF-RECORD] UI recording started: ...` says exactly): every change on the CRTV's screen (what is shown, where,
+its text and colours), the radio's and your character's numbers, the CRTV's state, and your presses on the phone.
+
+1. Switch it on, play the mini-game (30 seconds is plenty; a few attempts help), switch it off.
+2. Send `townfall-ui-recording.txt` with what you saw wrong, and `UE4SS.log`.
+
+It costs a little game speed while it is on, starts afresh each time, and stops by itself after 15 minutes or when the
+phone's page closes.
 
 ## Still stuck?
 

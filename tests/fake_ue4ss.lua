@@ -16,7 +16,10 @@ return function(scriptsDir, tempDir, options)
     end
 
     print = function(s) world.logs[#world.logs + 1] = (s:gsub("\n$", "")) end
-    os.getenv = function(k) if k == "TEMP" and not options.noTemp then return tempDir end end
+    os.getenv = function(k)
+        if k == "TEMP" and not options.noTemp then return tempDir end
+        if k == "TF_RECORD_DIR" then return tempDir end -- where the UI recording goes (tf_record.lua)
+    end
     -- The mod keeps the command files open (tf_commands.lua); tests close them before removing the folder.
     local opened, realOpen = {}, io.open
     world.telemetryWrites = 0 -- how often the telemetry file was opened for writing
@@ -44,6 +47,31 @@ return function(scriptsDir, tempDir, options)
         t.IsValid = function(self) return not self.destroyed end
         t.GetAddress = function(self) return self.address end
         t.GetFullName = t.GetFullName or function(self) return self.fullName or ("FakeObject_" .. self.address) end
+        -- The class of a fake object lists its own fields as properties (an object field is an ObjectProperty).
+        t.GetClass = t.GetClass or function(self)
+            local function property(name, value)
+                local kind = type(value) == "table" and value.IsValid and "ObjectProperty"
+                    or type(value) == "boolean" and "BoolProperty" or "FloatProperty"
+                return { GetFName = function() return { ToString = function() return name end } end,
+                         GetClass = function() return { GetFName = function() return { ToString = function() return kind end } end } end }
+            end
+            return {
+                IsValid = function() return true end,
+                GetFName = function() return { ToString = function() return (self.fullName or "FakeClass"):match("^(%S+)") end } end,
+                ForEachProperty = function(_, visit)
+                    local names = {}
+                    for name, value in pairs(self) do
+                        local kind = type(value)
+                        if type(name) == "string" and (kind == "number" or kind == "boolean" or (kind == "table" and value.IsValid)) then
+                            names[#names + 1] = name
+                        end
+                    end
+                    table.sort(names)
+                    for _, name in ipairs(names) do visit(property(name, self[name])) end
+                end,
+                GetSuperStruct = function() return CreateInvalidObject() end,
+            }
+        end
         return t
     end
 
@@ -232,13 +260,16 @@ return function(scriptsDir, tempDir, options)
                     GetAlignment = function() return { X = tuneUi.align, Y = 0 } end,
                 },
                 RenderTransform = { Translation = tuneUi[key].t },
+                GetVisibility = function() return 0 end, RenderOpacity = 1,
             })
         end
         local widget = object({
             EnemyVideoPlayer_Bink = binkPlayer(), WaypointVideoPlayer_Bink = binkPlayer(),
             BGStaticVideoPlayer_Bink = binkPlayer(),
             Image_NarrowBand = uiImage("band"), Image_DigitalNeedle = uiImage("box"), Image_FineTuneZone = uiImage("zone"),
-            DialocTextBlock_FineTune = object({ GetText = function() return fstring(tuneUi.text) end }),
+            DialocTextBlock_FineTune = object({ GetText = function() return fstring(tuneUi.text) end,
+                                                GetVisibility = function() return 0 end }),
+            AdvancedTuningMotionControl_DistanceToTarget = 0,
         })
         widget.fullName = "WBP_CRTV_C /Game/Townfall/UI/WBP_CRTV.WBP_CRTV_C"
         widget.WaypointVideoAudioComponent = fmodSound()

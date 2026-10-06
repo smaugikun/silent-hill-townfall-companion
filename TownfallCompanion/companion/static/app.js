@@ -10,6 +10,7 @@ import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound
 import { createCalibration, createFollower } from "./finetune.js";
 
 let state = {}; // the bridge's latest, from its first update on; every read copes with what is missing
+let recordOn = false, recordAskedAt = -Infinity; // the switch "Record the CRTV screen": the game writes a file for a bug report
 // When the game read the latest sample, on the phone's clock (ms): from its stamp (state.t), else
 // when it arrived. Speech and the fine-tune box are timed by it.
 const gameClock = createGameClock();
@@ -432,6 +433,7 @@ function renderSettings() {
   $("setSoundMuteGame").checked = sound.muteGame;
   $("setSoundMuteGame").disabled = !sound.inView; // the phone never plays
   $("setSoundVolume").value = String(Math.round(sound.volume * 100));
+  $("setRecord").checked = recordOn;
   $("setControlHaptics").checked = haptics.control;
   $("setSignalHaptics").checked = haptics.signal;
   for (const radio of document.querySelectorAll('input[name="intensity"]')) radio.checked = radio.value === haptics.intensity;
@@ -450,6 +452,12 @@ function renderStatus(view, monster, signal, heading) {
   $("stSound").textContent = `${sound.state}; the game's CRTV ${state.audio?.gameSoundOff ? "silent" : "audible"}`;
   $("stCutscene").textContent = state.cutscene?.sequence ?? "none";
   $("stTalk").textContent = talkText();
+  $("stRecord").textContent = recordText();
+}
+
+function recordText() {
+  if (state.recording) return "recording in the game: townfall-ui-recording.txt in the mod's folder";
+  return recordOn ? "asked: the game hasn't said it records (is the game running, and the mod up to date?)" : "off";
 }
 
 function pickupText() {
@@ -520,6 +528,12 @@ $("setSoundInView").addEventListener("change", (ev) => { setSound("inView", ev.t
 $("setSoundMuteGame").addEventListener("change", (ev) => { setSound("muteGame", ev.target.checked); requestGameSound(); });
 $("setSoundVolume").addEventListener("input", (ev) => setSound("volume", Number(ev.target.value) / 100));
 $("setSoundVolume").addEventListener("change", requestGameSound); // the game's sound comes back at 0, and goes again above it
+// Recording the game's CRTV screen to a file, for a bug report (tf_record.lua). Off whenever this page closes.
+$("setRecord").addEventListener("change", (ev) => {
+  recordOn = ev.target.checked;
+  recordAskedAt = performance.now();
+  postControl({type: "record", on: recordOn});
+});
 $("setControlHaptics").addEventListener("change", (ev) => setHaptics("control", ev.target.checked));
 $("setSignalHaptics").addEventListener("change", (ev) => setHaptics("signal", ev.target.checked));
 for (const radio of document.querySelectorAll('input[name="intensity"]')) {
@@ -650,8 +664,8 @@ function render(now) {
 
 // The bridge version this page needs (bridge.py BRIDGE_VERSION): phone commands, waypoint signals, no stale
 // files, the F key, sound, the game's clock stamp, the game's sounds read from its banks (WAV), a CRTV
-// command that only moves the dial.
-const NEEDS_BRIDGE = 10;
+// command that only moves the dial, recording the CRTV's screen.
+const NEEDS_BRIDGE = 11;
 let bridgeOnline = false;
 let everOnline = false;
 let pageVersion = null; // the bridge's page files when this page loaded (bridge.py page_version)
@@ -680,6 +694,7 @@ function connect() {
       if (typeof state.t === "number") gameClock.sample(state.t, arrived);
       sampledAt = gameClock.phoneTime(state.t) ?? arrived;
       paused = worldStill.update(state.world, sampledAt);
+      if (typeof state.recording === "boolean" && performance.now() - recordAskedAt > 3000) recordOn = state.recording;
       useNeedleColours(state.crtv?.needleColours);
       announceNewSignals();
       onTelemetry(state, paused);
@@ -726,6 +741,7 @@ document.addEventListener("contextmenu", (ev) => { if (!ev.target.closest(".shee
 // Leaving the page hands the game back, like moving to AV OUT, sound included.
 window.addEventListener("pagehide", () => {
   letGo();
+  if (recordOn || state.recording) postControl({type: "record", on: false});
   if (gameSoundAsked) postControl({type: "audio", muteGame: false});
 });
 // A wake lock, full screen, sound and (on iOS) the motion sensor need a tap first; any later tap brings

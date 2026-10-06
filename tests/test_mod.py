@@ -421,6 +421,119 @@ class CrtvScreenTest(ModTest):
         self.assertIsNone(self.crtv()["video"])
 
 
+class RecordTest(ModTest):
+    """The recording of the CRTV's screen (tf_record.lua), switched on from the phone, for a bug report."""
+
+    def setUp(self):
+        super().setUp()
+        self.record_command = self.tmp / "townfall-companion-record.json"
+        self.recording = self.tmp / "townfall-ui-recording.txt"
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.radio = self.world.radio
+        self.radio["active"] = True
+        self.world.tick(3)
+        self.seq = int(time.time() * 1000)  # the bridge's clock: the mod ignores a command that looks old
+
+    def switch(self, on):
+        self.seq += 1
+        self.record_command.write_text(json.dumps({"on": on, "seq": self.seq}))
+        self.world.tick(1)  # the command is carried out...
+        self.world.tick(1)  # ...and the telemetry, written before it within a tick, says so
+
+    def text(self):
+        return self.recording.read_text(encoding="utf-8")
+
+    def lines(self, containing):
+        return [line for line in self.text().splitlines() if containing in line]
+
+    def test_nothing_is_recorded_unless_the_phone_asks(self):
+        self.world.tick(5)
+        self.assertFalse(self.recording.exists())
+        self.assertFalse(self.telemetry()["recording"])
+
+    def test_a_leftover_command_does_not_start_a_recording(self):
+        # The first command seen is a baseline, as for every command: one from an earlier session starts nothing.
+        self.record_command.write_text(json.dumps({"on": True, "seq": 50}))
+        self.world.tick(3)
+        self.assertFalse(self.recording.exists())
+
+    def test_switched_on_it_writes_everything_once_and_then_what_changes(self):
+        self.switch(True)
+        self.assertTrue(self.telemetry()["recording"])
+        self.assertEqual(self.logged("[TF-RECORD] UI recording started:"), 1)
+        first = self.text()
+        self.assertIn("Townfall Companion UI recording", first)
+        for name in ("Image_NarrowBand", "Image_DigitalNeedle", "Image_FineTuneZone", "DialocTextBlock_FineTune"):
+            self.assertEqual(len(self.lines(f"{name}: ")), 1, name)  # every widget of the screen, once
+        self.assertIn('text="FINE TUNE - SEARCHING"', self.text())
+        self.assertIn("slot=100.0,0.0 size 20.0x10.0", self.lines("Image_DigitalNeedle: ")[0])
+        self.assertIn("screen.AdvancedTuningMotionControl_DistanceToTarget: 0.000", self.text())
+        self.assertIn("radio.frequency: 0.000", self.text())
+        self.assertIn("CRTV: active=true dial=0.000 signal=0.00 type=none", self.text())
+        self.world.tick(5)
+        self.assertEqual(self.text(), first)  # nothing changed: nothing written
+
+        self.world.fineTuneUi["box"]["x"] = 150
+        self.world.tick(1)
+        self.assertEqual(len(self.lines("Image_DigitalNeedle: ")), 2)
+        self.assertIn("slot=150.0,0.0", self.lines("Image_DigitalNeedle: ")[1])
+        self.assertEqual(len(self.lines("Image_NarrowBand: ")), 1)  # the bar didn't move
+
+    def test_the_radios_and_the_characters_state_and_the_montage_are_in_it(self):
+        self.switch(True)
+        self.world.player["IsUsingRadio"] = True
+        self.world.anim["RadioAlpha"] = 0.5
+        self.radio["cachedHighestStrengthSignalType"] = 0
+        self.radio["cachedHighestSignalStrength"] = 1.0
+        self.world.tick(1)
+        self.assertIn("pawn.IsUsingRadio: true", self.text())
+        self.assertIn("anim.RadioAlpha: 0.500", self.text())
+        self.assertIn("radio.cachedHighestSignalStrength: 1.000", self.text())
+        self.assertIn("CRTV: active=true dial=0.000 signal=1.00 type=waypoint", self.text())
+
+    def test_the_phones_presses_are_marked(self):
+        self.switch(True)
+        (self.tmp / "townfall-companion-confirm.json").write_text(json.dumps({"seq": int(time.time() * 1000)}))
+        self.world.tick(3)
+        self.assertEqual(len(self.lines("EVENT: phone pressed F")), 1)
+
+    def test_switched_off_it_stops_and_closes_the_file(self):
+        self.switch(True)
+        self.world.fineTuneUi["box"]["x"] = 150
+        self.world.tick(1)
+        written = self.text()
+        self.switch(False)
+        self.assertFalse(self.telemetry()["recording"])
+        self.assertEqual(self.logged("[TF-RECORD] UI recording stopped:"), 1)
+        self.world.fineTuneUi["box"]["x"] = 200
+        self.world.tick(3)
+        self.assertEqual(self.text(), written)
+
+    def test_it_starts_afresh_each_time(self):
+        self.switch(True)
+        self.switch(False)
+        self.world.fineTuneUi["box"]["x"] = 250
+        self.switch(True)
+        self.assertEqual(len(self.lines("Image_DigitalNeedle: ")), 1)  # the file was truncated, the first sample is whole
+        self.assertIn("slot=250.0", self.lines("Image_DigitalNeedle: ")[0])
+
+    def test_it_stops_by_itself_after_a_quarter_of_an_hour(self):
+        self.switch(True)
+        for _ in range(910):
+            self.world.tick(1)
+        self.assertFalse(self.telemetry()["recording"])
+        self.assertEqual(self.logged("UI recording reached 900 s"), 1)
+
+    def test_a_folder_that_cant_be_written_is_logged_and_the_game_goes_on(self):
+        self.tmp_recording_blocker = self.recording
+        self.recording.mkdir()  # a directory where the file should be: it can't be opened for writing
+        self.switch(True)
+        self.assertFalse(self.telemetry()["recording"])
+        self.assertEqual(self.logged("can't write the UI recording"), 1)
+        self.world.tick(2)  # and the mod keeps running
+        self.assertIn("player", self.telemetry())
+
+
 class EnemyCrtvTest(ModTest):
     def setUp(self):
         super().setUp()

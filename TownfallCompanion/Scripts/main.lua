@@ -20,6 +20,7 @@ local signals = require("tf_signals")
 local cutscene = require("tf_cutscene")
 local audio = require("tf_audio")
 local commands = require("tf_commands")
+local record = require("tf_record")
 
 local SAMPLE_MS = 100  -- telemetry rate
 local COMMAND_MS = 50  -- phone commands; steering needs the quick turnaround
@@ -93,8 +94,9 @@ local function sample()
     -- Nothing but the clocks changed: the file is rewritten only every KEEPALIVE_S (the companion calls a
     -- file older than 2 s the game having left), not ten times a second.
     local body = string.format('"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"pitch":%.1f,"alive":%s},"enemies":[%s],'
-        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s}}',
-        x, y, yaw, pitch, tostring(alive), enemyJson, signalJson, crtvJson, cutsceneJson, tostring(audio.isOff()))
+        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s},"recording":%s}',
+        x, y, yaw, pitch, tostring(alive), enemyJson, signalJson, crtvJson, cutsceneJson, tostring(audio.isOff()),
+        tostring(record.isOn()))
     local now = os.clock()
     if body == lastBody and now - lastWrite < KEEPALIVE_S then return end
     local f, err = io.open(telemetryPath, "w")
@@ -162,6 +164,7 @@ LoopInGameThreadWithDelay(UPDATE_MS, guarded("crtv update", whenPhone(crtv.updat
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("signal update", whenPhone(signals.update)))
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("cutscene update", whenPhone(cutscene.update)))
 LoopInGameThreadWithDelay(SAMPLE_MS, guarded("sample", whenPhone(sample)))
+LoopInGameThreadWithDelay(SAMPLE_MS, guarded("record", record.update)) -- nothing while it is off
 LoopInGameThreadWithDelay(COMMAND_MS, guarded("phone command", commands.poll))
 LoopInGameThreadWithDelay(AUDIO_MS, guarded("audio", audio.update))
 LoopInGameThreadWithDelay(UPDATE_MS, reportPerf)

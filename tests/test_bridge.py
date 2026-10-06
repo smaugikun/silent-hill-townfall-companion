@@ -241,6 +241,15 @@ class CommandTest(BridgeTest):
         self.assertEqual((first["yaw"], second["yaw"]), (10.0, 350.0))
         self.assertGreater(second["seq"], first["seq"])
 
+    def test_record_command(self):
+        self.assertEqual(self.post("/api/control", {"type": "record", "on": True}), 200)
+        self.assertEqual(list(self.command_file("townfall-companion-record.json")), ["on", "seq"])
+        self.assertTrue(self.command_file("townfall-companion-record.json")["on"])
+        self.assertEqual(self.post("/api/control", {"type": "record", "on": False}), 200)
+        self.assertFalse(self.command_file("townfall-companion-record.json")["on"])
+        for body in ({"type": "record"}, {"type": "record", "on": "yes"}, {"type": "record", "on": 1}):
+            self.assertEqual(self.post("/api/control", body), 400, body)
+
     def test_bad_commands_are_refused(self):
         for body in ({"type": "crtv", "active": "yes", "frequency": 0.2},
                      {"type": "crtv", "active": True, "animate": "yes", "frequency": 0.2}, {"type": "crtv", "active": True},
@@ -279,7 +288,7 @@ class GameLiveTest(BridgeTest):
     def test_game_live_follows_the_telemetry_file(self):
         state = json.loads(self.get("/api/state")[2])
         self.assertFalse(state["gameLive"])
-        self.assertEqual(state["bridge"], 10)  # static/app.js warns about older bridges
+        self.assertEqual(state["bridge"], 11)  # static/app.js warns about older bridges
         self.assertRegex(state["page"], r"^[0-9a-f]{12}$")  # an open page reloads when its files change
         self.telemetry.write_text(json.dumps({"t": 812.25, "world": 30.5, "player": {"x": 1, "y": 2, "yaw": 3},
                                               "signals": [{"id": "Clinic", "channel": 0.15}]}))

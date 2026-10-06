@@ -24,7 +24,7 @@ from game_sounds import GameSounds, wav_seconds
 
 STATIC = Path(__file__).resolve().parent / "static"
 # Bump when the phone UI starts relying on something new in the bridge (static/app.js checks it).
-BRIDGE_VERSION = 10
+BRIDGE_VERSION = 11
 # Taken by another program, or kept by Windows for itself (Hyper-V and WSL reserve ranges of ports).
 PORT_UNAVAILABLE = {errno.EADDRINUSE, errno.EACCES, getattr(errno, "WSAEACCES", errno.EACCES)}
 PORT_TRIES = 20
@@ -42,7 +42,8 @@ GAME_GONE_AFTER = 60.0  # a game that hasn't said it runs for this long has clos
 MAX_BODY = 4096  # the phone's commands are tiny; more is not from the phone
 # Phone commands for the mod, next to the telemetry file: /api/control "type" -> file.
 COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-companion-steer.json",
-                 "confirm": "townfall-companion-confirm.json", "audio": "townfall-companion-audio.json"}
+                 "confirm": "townfall-companion-confirm.json", "audio": "townfall-companion-audio.json",
+                 "record": "townfall-companion-record.json"}
 
 state_lock = threading.Lock()
 telemetry = {
@@ -53,6 +54,7 @@ telemetry = {
     "cutscene": None,
     "gameLive": False,
     "demo": False,
+    "recording": False,
     # The phone UI checks this, so a bridge left running from before an update is noticed.
     "bridge": BRIDGE_VERSION,
 }
@@ -154,6 +156,8 @@ def merge_telemetry(payload):
         for key in ("enemies", "signals"):
             if isinstance(payload.get(key), list):
                 telemetry[key] = payload[key]
+        if isinstance(payload.get("recording"), bool):  # the mod is recording the CRTV's screen (tf_record.lua)
+            telemetry["recording"] = payload["recording"]
         if "cutscene" in payload:  # null when there is none: replaced, not merged
             telemetry["cutscene"] = payload["cutscene"]
         if isinstance(payload.get("t"), (int, float)):  # the game's clock at the sample, for timing on the phone
@@ -222,6 +226,11 @@ def send_to_game(commands_dir, payload):
         # dialogue / video: the phone plays the talking (a waypoint's line, a cutscene's dialogue) / the CRTV
         # screen's video with its sound, so the game's can go quiet too
         command = {"muteGame": payload["muteGame"], **flags}
+    elif payload["type"] == "record":
+        # on: the mod records what the CRTV's screen does into a text file (tf_record.lua), for a bug report
+        if not isinstance(payload.get("on"), bool):
+            raise ValueError("on must be true or false")
+        command = {"on": payload["on"]}
     else:
         command = {}  # confirm: the press is the whole command
     with state_lock:

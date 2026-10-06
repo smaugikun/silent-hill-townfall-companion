@@ -5,17 +5,20 @@
 --   townfall-companion-confirm.json   {"seq":...}                                the fine-tune press (F / A)
 --   townfall-companion-audio.json     {"muteGame":true,"dialogue":true,"video":true,"seq":...} the game's CRTV
 --                                     sound (and talking, and the screen's video) quiet while the phone plays it
+--   townfall-companion-record.json    {"on":true,"seq":...}                      record the CRTV's screen to a file (tf_record.lua)
 -- seq is the bridge's clock in ms; a changed seq means a new command.
 
 local common = require("tf_common")
 local player = require("tf_player")
 local crtv = require("tf_crtv")
 local audio = require("tf_audio")
+local record = require("tf_record")
 
 local STEER_MAX_AGE = 2   -- seconds; steering older than this is from a phone that stopped sending
 local STEER_GAP_MS = 2000 -- after a longer pause the phone's next heading only sets a new starting point
 local CONFIRM_MAX_AGE = 1 -- a late press would land at another moment of the mini-game
 local AUDIO_MAX_AGE = 5   -- the phone repeats its sound request every 2 s
+local RECORD_MAX_AGE = 10  -- the phone says it once, when its switch is flipped
 
 local M = {}
 
@@ -27,6 +30,7 @@ function M.init(tempDir)
     channels.steer = { path = tempDir .. "\\townfall-companion-steer.json" }
     channels.confirm = { path = tempDir .. "\\townfall-companion-confirm.json" }
     channels.audio = { path = tempDir .. "\\townfall-companion-audio.json" }
+    channels.record = { path = tempDir .. "\\townfall-companion-record.json" }
 end
 
 -- os.time has whole seconds, so this is coarse: enough to drop commands from a phone long gone.
@@ -102,7 +106,12 @@ function M.poll()
     if confirm and not tooOld(confirmSeq, CONFIRM_MAX_AGE) then
         crtv.confirmFineTune()
         common.log("TF-CRTV", "phone pressed F (fine-tune confirm)")
+        record.event("phone pressed F")
     end
+
+    local recording, recordSeq = fresh(channels.record)
+    local on = recording and recording:match('"on"%s*:%s*(%a+)')
+    if (on == "true" or on == "false") and not tooOld(recordSeq, RECORD_MAX_AGE) then record.set(on == "true") end
 
     -- Applied at once: the phone asks as a line starts on it, and until the game's goes quiet both talk.
     local sound, soundSeq = fresh(channels.audio)
