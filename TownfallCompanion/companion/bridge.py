@@ -556,7 +556,7 @@ def demo_loop(commands_dir, sounds):
     sweeping) and down for 8 s; four enemies circling, each on its own channel, with static that
     fades out at 35 m; one active waypoint signal, which has to be fine-tuned: on its channel a box runs
     to and fro along the fine-tune bar, and a press (F / A, "confirm") while it is over the diamond finds
-    it. Tuned to a monster or a found waypoint, the CRTV's screen plays its video. On the waypoint's
+    it. Tuned to a monster or a waypoint, the CRTV's screen plays its video (behind the mini-game too). On the waypoint's
     channel it talks, line after line of the game's (distorted until found). The phone's commands
     are read from the files the mod reads: a CRTV the phone raised stays up, tuned where the phone left
     it, until the phone lowers it; the player turns by as much as the phone turns, and stops turning
@@ -640,7 +640,7 @@ def demo_loop(commands_dir, sounds):
         tuned = next((s for s in enemies + signals if s["tuned"]), None)
         signal_type = ("none" if not tuned else "enemy" if tuned in enemies
                        else "waypoint_tuned" if found else "waypoint")
-        video = tuned["video"] if tuned and signal_type != "waypoint" else None
+        video = tuned["video"] if tuned else None  # on the waypoint's channel too: the game plays one behind the mini-game
         fine_tune = ({"box": round(box, 4), "zone": zone, "text": "FINE TUNE - SEARCHING"}
                      if signal_type == "waypoint" else None)
         if video != playing:

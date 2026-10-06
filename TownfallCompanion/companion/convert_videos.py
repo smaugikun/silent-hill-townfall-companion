@@ -306,6 +306,23 @@ class GameVideos:
         return [config.missing_tool(key, self.tools[key])
                 for key in keys if not (self.tools[key] and self.tools[key].is_file())]
 
+    def other_video(self, relative):
+        """The game's file for a path the mod reported that is in no folder of the index (a video the CRTV's screen
+        plays that nobody listed, e.g. its background): the same path under the game's Movies folder, `.bk2` or
+        `.mp4`. Only inside that folder: the path comes from a request."""
+        if not self.movies or not self.movies.is_dir():
+            return None
+        root = self.movies.resolve()
+        for suffix in (".bk2", ".mp4"):
+            try:
+                file = (self.movies / relative.with_suffix(suffix)).resolve()
+                file.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            if file.is_file():
+                return file
+        return None
+
     def _soundtrack_map(self):
         if self._soundtracks is None:
             with self._soundtracks_lock:
@@ -360,7 +377,7 @@ class GameVideos:
         if out.is_file():
             return out
 
-        source = self.index.get(key)
+        source = self.index.get(key) or self.other_video(relative)
         if not source:
             return None
         missing = self.missing_tools(source)

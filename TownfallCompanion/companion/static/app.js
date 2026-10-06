@@ -7,7 +7,7 @@ import { listenMotion, onPickup, onPutDown, pickup, pickupPosition, setAutoPicku
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
 import { lineFor, resumeSound, setSound, sound, soundReady, talking, unlockSound, updateLine, updateSound } from "./sound.js";
-import { createFollower } from "./finetune.js";
+import { createCalibration, createFollower } from "./finetune.js";
 
 let state = {}; // the bridge's latest, from its first update on; every read copes with what is missing
 // When the game read the latest sample, on the phone's clock (ms): from its stamp (state.t), else
@@ -541,14 +541,16 @@ $("secureHint").hidden = window.isSecureContext;
 // --- The fine-tune mini-game ---
 //
 // The box is drawn by a follower (finetune.js) that runs its motion smoothly between the updates.
-let tuneShown = null; // the game's last fineTune, while the mini-game is on
+let tuneShown = null; // the game's last fineTune, placed on the bar, while the mini-game is on
 let follower = null;
+const calibration = createCalibration(); // the bar's ends, learned from the box's travel, kept between attempts
 
 function onFineTune(tune) {
-  if (!tune) { tuneShown = follower = null; return; }
+  if (!tune) { tuneShown = follower = null; calibration.restart(); return; }
   follower ??= createFollower();
-  follower.sample(tune.box, sampledAt);
-  tuneShown = tune;
+  const onBar = calibration.map(tune.box, tune.zone);
+  follower.sample(onBar.box, sampledAt);
+  tuneShown = {...tune, ...onBar};
 }
 
 function fineTuneAt(now) {
@@ -613,7 +615,8 @@ function render(now) {
   // The story clips carry their soundtracks; they play out loud with the rest of the phone's sound. Not a
   // cutscene's: the game plays that sound too and can't safely be made to stop (tf_audio.lua).
   const playing = shown && phonePlays() && soundReady();
-  clip.muted = !playing || Boolean(cutscene?.video);
+  // Behind the fine-tune mini-game the picture is the game's, its sound isn't ours: the game's stays as it is.
+  clip.muted = !playing || Boolean(cutscene?.video) || Boolean(tune);
   clip.volume = sound.volume;
   // Showing the game's CRTV, the clip is the video its screen plays: only then may the game's go quiet.
   const crtvVideo = view.source === "game" && !cutscene?.video && clipPlaying && !clip.muted;

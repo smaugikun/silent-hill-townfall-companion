@@ -75,9 +75,20 @@ end
 -- without extension, e.g. "Bink/Shipping/Mov_CRTV_Clinic", from the game's URL for it.
 M.CRTV_VIDEO = "CRTV_Movies/(.+)%.bk2$"
 
--- A video URL from the game, with forward slashes, matched against `pattern`; nil if it doesn't match.
+-- A video URL from the game, with forward slashes, matched against `pattern` (a Lua pattern, or a function of the
+-- path); nil if it doesn't match.
 function M.videoPath(url, pattern)
-    return ((M.str(url) or ""):gsub("\\", "/")):match(pattern)
+    local path = (M.str(url) or ""):gsub("\\", "/")
+    if type(pattern) == "function" then return pattern(path) end
+    return path:match(pattern)
+end
+
+-- Any video of the game: its path under Content/Movies without extension, as the companion's clips folder has it:
+-- one under CRTV_Movies without that folder ("Bink/Shipping/Mov_CRTV_Clinic"), another with its folder
+-- ("Cutscene_Diegetic_Movies/Screen", "UI/Static/Background"). The companion converts what the phone asks for by it.
+function M.anyVideo(path)
+    local key = path:match(M.CRTV_VIDEO) or path:match("Movies/(.+)%.bk2$")
+    return key and (key:gsub("^CRTV_Movies/", ""))
 end
 
 -- What a media player (Bink or Unreal's) plays, as videoPath(its URL, pattern), and how far in

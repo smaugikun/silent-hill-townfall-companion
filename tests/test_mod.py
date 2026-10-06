@@ -283,11 +283,64 @@ class CrtvScreenTest(ModTest):
         # with the dial at 0, Mov_CRTV_Clinic plays but isn't on the screen.
         self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Shipping/Mov_CRTV_Clinic.bk2", 4)
         self.assertIsNone(self.crtv()["video"])
-        self.tune(0)  # on the waypoint's channel, not found yet: the fine-tune mini-game
-        self.assertIsNone(self.crtv()["video"])
         self.assertEqual(self.logged("[TF-CRTV] screen plays Bink/Shipping/Mov_CRTV_Clinic"), 0)
         self.tune(1)
         self.assertEqual(self.crtv()["video"], "Bink/Shipping/Mov_CRTV_Clinic")
+
+    def test_the_screen_plays_a_video_behind_the_fine_tune_mini_game(self):
+        # On the waypoint's channel, not found yet, the game's screen shows a video, not static (the user, 2026-10-06).
+        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Shipping/Mov_CRTV_Clinic.bk2", 4)
+        self.tune(0)
+        crtv = self.crtv()
+        self.assertEqual((crtv["video"], crtv["videoTime"]), ("Bink/Shipping/Mov_CRTV_Clinic", 4.0))
+
+    def test_without_the_waypoints_video_the_background_plays_behind_the_mini_game(self):
+        # Its folder is part of the path the phone asks the companion for, which converts it on request.
+        self.world.playVideo("BGStaticVideoPlayer_Bink", r"C:\Game\Townfall\Content\Movies\UI\Static\Background.bk2", 1.5)
+        self.tune(0)
+        self.assertEqual(self.crtv()["video"], "UI/Static/Background")
+        self.tune(None)
+        self.assertIsNone(self.crtv()["video"])  # not behind the plain static: the phone has its own for that
+
+    def test_a_video_in_a_folder_of_its_own_keeps_the_folder_in_its_path(self):
+        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/Cutscene_Diegetic_Movies/Screen.bk2")
+        self.tune(1)
+        self.assertEqual(self.crtv()["video"], "Cutscene_Diegetic_Movies/Screen")
+
+    def test_which_players_play_during_the_mini_game_is_logged(self):
+        self.world.playVideo("BGStaticVideoPlayer_Bink", "./Movies/UI/Background.bk2", 0)
+        self.tune(0)
+        self.crtv()
+        self.assertEqual(self.logged("[TF-CRTV] mini-game: WaypointVideoPlayer_Bink: idle, BGStaticVideoPlayer_Bink: "
+                                     "UI/Background (url ./Movies/UI/Background.bk2), EnemyVideoPlayer_Bink: idle"), 1)
+
+    def test_the_boxs_first_samples_are_traced_in_the_log(self):
+        self.tune(0)
+        for step in range(25):
+            self.world.fineTuneUi["box"]["x"] = 100 + 10 * step
+            self.world.tick(1)
+        traces = [line for line in self.logs() if "fine tune trace" in line]
+        self.assertEqual(len(traces), 2, traces)  # 10 + 10 samples so far, 5 waiting
+        self.assertIn("bar centre 300.0, diamond centre 300.0", traces[0])
+        self.assertIn("0.00:110.0 1.00:120.0", traces[0])  # seconds since the start : the box's centre
+        self.tune(None)
+        self.world.tick(1)  # the mini-game ends: the last samples are logged, not lost
+        traces = [line for line in self.logs() if "fine tune trace" in line]
+        self.assertEqual(len(traces), 3, traces)
+        self.assertTrue(traces[2].endswith("20.00:310.0 21.00:320.0 22.00:330.0 23.00:340.0 24.00:350.0"), traces[2])
+        self.tune(0)  # the next mini-game is traced from its start too
+        self.world.tick(1)
+        self.world.tick(1)
+        self.tune(None)
+        self.world.tick(1)
+        self.assertEqual(len([line for line in self.logs() if "fine tune trace" in line]), 4)
+
+    def test_a_long_mini_game_is_traced_only_at_its_start(self):
+        self.tune(0)
+        for step in range(60):
+            self.world.fineTuneUi["box"]["x"] = 100 + step
+            self.world.tick(1)
+        self.assertEqual(len([line for line in self.logs() if "fine tune trace" in line]), 4)  # 40 samples, no more
 
     def test_only_the_tuned_signals_player_counts(self):
         self.world.playVideo("EnemyVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Enraged_Focused.bk2", 1)

@@ -236,6 +236,7 @@ return function(scriptsDir, tempDir, options)
         end
         local widget = object({
             EnemyVideoPlayer_Bink = binkPlayer(), WaypointVideoPlayer_Bink = binkPlayer(),
+            BGStaticVideoPlayer_Bink = binkPlayer(),
             Image_NarrowBand = uiImage("band"), Image_DigitalNeedle = uiImage("box"), Image_FineTuneZone = uiImage("zone"),
             DialocTextBlock_FineTune = object({ GetText = function() return fstring(tuneUi.text) end }),
         })

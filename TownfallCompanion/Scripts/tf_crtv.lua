@@ -33,19 +33,45 @@ function M.read()
     return crtv
 end
 
--- The in-game CRTV screen (UCRTVWidget) plays enemy and waypoint videos on two Bink players.
--- Returns what the screen shows as the path under Movies/CRTV_Movies without extension
--- (e.g. "Bink/Shipping/Mov_CRTV_Clinic"), and how far into it in seconds if the game says; nil if
--- it shows none. A player playing isn't enough: the waypoint's plays its video as soon as the CRTV is
--- up, dial anywhere (e.g. at 0.000, type none, Mov_CRTV_Clinic playing), and the screen shows it only
--- once the signal is tuned in. So only the player of the signal tuned in counts: the enemy's while
--- tuned to an enemy, the waypoint's once a waypoint is found.
-local VIDEO_PLAYERS = { enemy = "EnemyVideoPlayer_Bink", waypoint_tuned = "WaypointVideoPlayer_Bink" }
+-- The in-game CRTV screen (WBP_PortableTVScreen_C) plays enemy and waypoint videos, and a looping background, on
+-- Bink players. Returns what the screen shows as the path under Movies without extension (e.g.
+-- "Bink/Shipping/Mov_CRTV_Clinic", common.anyVideo), and how far into it in seconds if the game says; nil if it
+-- shows none. A player playing isn't enough: the waypoint's plays its video as soon as the CRTV is up, dial
+-- anywhere (e.g. at 0.000, type none, Mov_CRTV_Clinic playing), and the screen shows it only once the signal is
+-- tuned in. So only the player of the signal tuned in counts: the enemy's while tuned to an enemy, the waypoint's
+-- once a waypoint is found. While the fine-tune mini-game runs (a waypoint that isn't found yet) the screen plays
+-- a video behind it, not static (the user, 2026-10-06): the waypoint's, else the background's; which of the two it is
+-- isn't known, the log says which players play then.
+local VIDEO_PLAYERS = {
+    enemy = { "EnemyVideoPlayer_Bink" },
+    waypoint_tuned = { "WaypointVideoPlayer_Bink" },
+    waypoint = { "WaypointVideoPlayer_Bink", "BGStaticVideoPlayer_Bink" },
+}
 
 local function playingVideo(radio, signalType)
     local widget = radio:GetCRTVWidget()
-    if not VIDEO_PLAYERS[signalType] or not widget or not widget:IsValid() then return nil end
-    return common.playing(widget[VIDEO_PLAYERS[signalType]], common.CRTV_VIDEO)
+    local players = VIDEO_PLAYERS[signalType]
+    if not players or not widget or not widget:IsValid() then return nil end
+    for _, name in ipairs(players) do
+        local path, seconds = common.playing(widget[name], common.anyVideo)
+        if path then return path, seconds end
+    end
+end
+
+-- "WaypointVideoPlayer_Bink: Bink/Shipping/Mov_CRTV_Clinic 4.2 s, BGStaticVideoPlayer_Bink: idle": what each player
+-- of the screen plays, for the log.
+local function playersText(widget)
+    local parts = {}
+    for _, name in ipairs({ "WaypointVideoPlayer_Bink", "BGStaticVideoPlayer_Bink", "EnemyVideoPlayer_Bink" }) do
+        local ok, text = pcall(function()
+            local player = widget[name]
+            if not (player and player:IsValid() and player:IsPlaying()) then return "idle" end
+            local url = common.str(player:GetUrl()) or "?"
+            return (common.videoPath(url, common.anyVideo) or url:gsub("\\", "/")) .. " (url " .. url .. ")"
+        end)
+        parts[#parts + 1] = name .. ": " .. (ok and text or "unreadable")
+    end
+    return table.concat(parts, ", ")
 end
 
 -- The fine-tune mini-game on the CRTV screen (WBP_PortableTVScreen): a box
@@ -69,10 +95,23 @@ local member = common.member
 -- Canvas_FineTuning, so the mod never sent it), but it has the bar, the box and the diamond as members, and the text.
 local FINE_LOG_S = 2 -- the box moves every sample: its numbers are logged this often, or when the bar, diamond or text change
 local fineLog = { key = nil, at = -math.huge }
+-- How the box really moves isn't known (the user saw it vanish half way along the phone's bar and come out of the other
+-- side): the first TRACE_SAMPLES samples of each mini-game are logged, in the widget's own units.
+local TRACE_SAMPLES = 40
+local trace = { left = TRACE_SAMPLES, started = nil, values = {}, bar = 0, diamond = 0 }
+
+local function flushTrace()
+    if #trace.values == 0 then return end
+    common.log("TF-CRTV", "fine tune trace (seconds:box centre; bar centre %.1f, diamond centre %.1f): %s",
+        trace.bar, trace.diamond, table.concat(trace.values, " "))
+    trace.values = {}
+end
 
 local function fineTune(radio, expected)
     if not expected then
         common.clearChannel("fine tune read")
+        flushTrace() -- a mini-game that ended before its last few samples were logged
+        trace.left, trace.started = TRACE_SAMPLES, nil
         return nil
     end
     local function nothing(why)
@@ -97,6 +136,13 @@ local function fineTune(radio, expected)
         fineLog.key, fineLog.at = key, now
         common.log("TF-CRTV", "fine tune \"%s\": bar %.1f+%.1f box %.1f+%.1f diamond %.1f+%.1f",
             text, bandX, bandW, boxX, boxW, zoneX, zoneW)
+    end
+    if trace.left > 0 then
+        trace.left = trace.left - 1
+        trace.started = trace.started or now
+        trace.values[#trace.values + 1] = string.format("%.2f:%.1f", now - trace.started, boxX + boxW / 2)
+        trace.bar, trace.diamond = bandX + bandW / 2, zoneX + zoneW / 2
+        if #trace.values >= 10 or trace.left == 0 then flushTrace() end
     end
     if not (bandW > 0) then return nothing("the bar has no width") end
     local box, diamond = (boxX + boxW / 2 - bandX) / bandW, (zoneX + zoneW / 2 - bandX) / bandW
@@ -323,8 +369,16 @@ function M.update()
     local crtv = M.read()
     common.logChange("crtv", "TF-CRTV", string.format("active=%s frequency=%.2f signal=%.2f type=%s",
         tostring(crtv.active), crtv.frequency, crtv.strength, crtv.type))
-    local video = crtv.active and playingVideo(player.pawn():GetRadio(), crtv.type)
+    local radio = crtv.active and player.pawn():GetRadio()
+    local video = radio and playingVideo(radio, crtv.type)
     common.logChange("crtv video", "TF-CRTV", "screen plays " .. (video or "nothing"))
+    if radio and crtv.type == "waypoint" then
+        common.optional("video players read", "TF-CRTV", function()
+            common.logChange("mini-game players", "TF-CRTV", "mini-game: " .. playersText(radio:GetCRTVWidget()))
+        end)
+    else
+        common.clearChannel("mini-game players")
+    end
 end
 
 return M

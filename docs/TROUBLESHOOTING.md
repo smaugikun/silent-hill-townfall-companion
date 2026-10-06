@@ -141,9 +141,17 @@ dropped` if that is there.
 The mod sends the mini-game while the CRTV is tuned to a waypoint that isn't found yet, reading the bar, the box and
 the diamond from the CRTV's screen. If the phone still shows only static then, `UE4SS.log` says why, in lines
 starting with `[TF-CRTV] mini-game expected, none sent to the phone:` (the screen has no bar, box or diamond, the
-bar has no width, or the box has no position), or `fine tune error`. If the box on the phone doesn't move with the
-one on the monitor, report the `[TF-CRTV] fine tune "..."` lines: they show the bar, box and diamond as the game
-reports them, about every two seconds.
+bar has no width, or the box has no position), or `fine tune error`.
+
+If the box on the phone doesn't move like the one on the monitor (it jumps, stops, or leaves the bar), report the
+`[TF-CRTV] fine tune trace ...` lines: they are the box's real positions, a few seconds of them from the start of
+each mini-game, and the phone fits its bar to them after one round. `[TF-CRTV] fine tune "..."` lines show the bar,
+box and diamond as the game reports them, about every two seconds.
+
+The game plays a video behind the mini-game; the phone plays it too (without its sound) once the companion has
+converted it, which it does when the phone asks, also for a video it didn't list at its start. If the phone shows
+static there, look for `Game video: converting on request` or `Game video unavailable` in the companion's window, and
+for `[TF-CRTV] mini-game: WaypointVideoPlayer_Bink: ...` in `UE4SS.log`: it says which video the game plays then.
 
 ### A signal's voice is heard only in the game
 
