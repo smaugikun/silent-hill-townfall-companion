@@ -124,22 +124,25 @@ def remove_ipc_files(telemetry_file):
             pass
 
 
-def read_game_beat(path, within):
-    """Whether the game's heartbeat is no older than `within` seconds."""
+def read_game_beat(path, within, started_at=None):
+    """Whether the game's heartbeat is no older than `within` seconds and from this companion's run."""
     try:
-        return time.time() - float(json.loads(Path(path).read_text(encoding="utf-8"))["time"]) <= within
+        beat = float(json.loads(Path(path).read_text(encoding="utf-8"))["time"])
+        return (started_at is None or beat >= started_at) and time.time() - beat <= within
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
 
-def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER):
+def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER, started_at=None):
     """Says every second that the companion is here and how many phones have the page open, and closes it
     once a game it has seen running has stopped saying so. Started without the game, it just keeps running."""
     folder = Path(telemetry_file).parent
+    if started_at is None:
+        started_at = time.time()
     seen = False
     while True:
         write_heartbeat(folder / HEARTBEAT_FILE, port)
-        if read_game_beat(folder / GAME_FILE, gone_after):
+        if read_game_beat(folder / GAME_FILE, gone_after, started_at):
             seen = True
         elif seen:
             print("The game has closed: closing the companion.")
@@ -736,6 +739,7 @@ def open_server(host, port):
 
 
 def main():
+    started_at = time.time()  # only a heartbeat from this companion's run may mark the game as seen
     parser = argparse.ArgumentParser(description="Townfall Companion: serves the phone's page and passes what "
                                      "happens between the phone and the game. Settings: companion.ini.")
     parser.add_argument("--settings", type=Path, default=config.SETTINGS_FILE,
@@ -805,7 +809,7 @@ def main():
         else:
             print(f"Game videos:  {len(Handler.videos.index)} found; missing clips start pre-caching now")
             Handler.videos.start_precache()
-    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.game_gone_after),
+    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.game_gone_after, started_at),
                      daemon=True).start()
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
     threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()

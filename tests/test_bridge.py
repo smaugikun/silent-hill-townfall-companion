@@ -16,6 +16,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 COMPANION = Path(__file__).resolve().parents[1] / "TownfallCompanion" / "companion"
 BRIDGE = COMPANION / "bridge.py"
@@ -702,6 +703,22 @@ class CleanupTest(unittest.TestCase):
 
 
 class GameExitTest(unittest.TestCase):
+    def test_only_heartbeats_from_this_run_count_with_the_full_load_stall_tolerance(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
+        with tempfile.TemporaryDirectory() as tmp, patch.object(bridge.time, "time", return_value=1000):
+            beat = Path(tmp) / "game.json"
+            beat.write_text(json.dumps({"time": 999}))
+            self.assertFalse(bridge.read_game_beat(beat, bridge.GAME_GONE_AFTER, started_at=1000))
+            beat.write_text(json.dumps({"time": 1001}))
+            with patch.object(bridge.time, "time", return_value=1061):
+                self.assertTrue(bridge.read_game_beat(beat, bridge.GAME_GONE_AFTER, started_at=1000))
+            with patch.object(bridge.time, "time", return_value=1061.01):
+                self.assertFalse(bridge.read_game_beat(beat, bridge.GAME_GONE_AFTER, started_at=1000))
+
     def test_the_game_is_running_while_its_heartbeat_is_recent(self):
         sys.path.insert(0, str(COMPANION))
         try:
@@ -730,7 +747,9 @@ class GameExitTest(unittest.TestCase):
             game.write_text(json.dumps({"time": int(time.time())}))  # the game runs
             process = self.start(folder)
             try:
-                time.sleep(2.5)
+                time.sleep(1.5)
+                game.write_text(json.dumps({"time": int(time.time())}))  # observed after companion startup
+                time.sleep(1)
                 self.assertIsNone(process.poll())  # it keeps running while the game says so
                 game.write_text(json.dumps({"time": int(time.time()) - 100}))  # and stops saying so
                 self.assertEqual(process.wait(timeout=15), 0)  # a normal exit: the window closes
@@ -739,6 +758,26 @@ class GameExitTest(unittest.TestCase):
                     process.kill()
                     process.wait()
             self.assertEqual([p.name for p in folder.glob("townfall-companion-*")], [])  # its files are gone too
+
+    def test_a_leftover_heartbeat_is_ignored_until_the_game_writes_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            game = folder / "townfall-companion-game.json"
+            game.write_text(json.dumps({"time": int(time.time())}))  # fresh, but from before this companion
+            process = self.start(folder)
+            try:
+                time.sleep(6)  # beyond the test's 3 s timeout and the next heartbeat poll
+                self.assertIsNone(process.poll())  # the leftover alone must not mark the game as seen
+                self.assertTrue((folder / "townfall-companion-bridge.json").is_file())
+                game.write_text(json.dumps({"time": int(time.time())}))  # an already-running game writes again
+                time.sleep(1.5)
+                self.assertIsNone(process.poll())
+                self.assertEqual(process.wait(timeout=15), 0)  # the newly observed heartbeat now expires normally
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            self.assertEqual([p.name for p in folder.glob("townfall-companion-*")], [])
 
     def test_started_without_the_game_it_keeps_running(self):
         with tempfile.TemporaryDirectory() as tmp:
