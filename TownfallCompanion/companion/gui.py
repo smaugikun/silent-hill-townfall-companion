@@ -25,7 +25,7 @@ BADGES = {  # step state -> (badge, colour)
     netcheck.OK: (" OK ", "#5f8a4c"), netcheck.PROBLEM: (" FIX ", "#b0503c"), netcheck.NOTE: (" NOTE ", "#a8822f"),
     netcheck.WAIT: (" WAIT ", "#4f6f8f"), netcheck.UNKNOWN: (" N/A ", "#5a544a"), netcheck.CHECKING: (" ... ", "#5a544a"),
 }
-ACTIONS = {"allow-python": "Allow Python through the firewall"}  # a step's button: action -> label
+ACTIONS = {"allowed-apps": "Open Windows' allowed apps"}  # a step's button: action -> label
 LOG_LINES = 2000  # the bridge logs every request; older lines go
 
 
@@ -203,8 +203,6 @@ class Window:
             elif kind == "checked":
                 self.checking = False
                 self.check_button.configure(state="normal", text="Check the connection")
-            elif kind == "allowed":
-                self.allowed(value)
             elif kind == "ended":
                 self.ended(value)
             if self.gone:
@@ -389,36 +387,25 @@ class Window:
                 steps.insert("end", step.fix + "\n", "fix")
             label = ACTIONS.get(step.action)
             if label and self.served:
-                button = self.button(steps, label, lambda action=step.action: self.act(action))
-                self.step_buttons.append(button)
-                steps.insert("end", " ", "body")  # the button lines up with the text above
-                steps.window_create("end", window=button, pady=4)
+                # what the line asks for, and checking again once it is done
+                buttons = [self.button(steps, label, lambda action=step.action: self.act(action)),
+                           self.button(steps, "Check the connection", self.check)]
+                self.step_buttons.extend(buttons)
+                steps.insert("end", " ", "body")  # the buttons line up with the text above
+                for number, button in enumerate(buttons):
+                    if number:
+                        steps.insert("end", "  ", "body")
+                    steps.window_create("end", window=button, pady=4)
                 steps.insert("end", "\n")
         steps.configure(state="disabled")
         steps.yview_moveto(top)
 
     def act(self, action):
-        if action == "allow-python":
-            program, arguments = netcheck.allow_rule(self.findings)
-            print(f"Asking Windows for permission to let Python in on "
-                  f"{netcheck.network_profile(self.findings)} networks.")
-            threading.Thread(target=self.elevate, args=(program, arguments), daemon=True).start()
-
-    def elevate(self, program, arguments):
-        try:
-            self.events.put(("allowed", netcheck.run_elevated(program, arguments)))
-        except OSError as exc:
-            self.events.put(("allowed", str(exc)))
-
-    def allowed(self, result):
-        if result is None:
-            print("Nothing changed: Windows' permission question was answered with No.")
-        elif result == 0:
-            print(f"Firewall rule added: \"{netcheck.RULE_NAME}\" lets Python in on "
-                  f"{netcheck.network_profile(self.findings)} networks.")
-            self.check()
-        else:
-            print(f"The firewall rule couldn't be added ({result if isinstance(result, str) else f'exit code {result}'}).")
+        if action == "allowed-apps":
+            try:
+                netcheck.open_allowed_apps()
+            except OSError as exc:
+                print(f"Couldn't open Windows' list of allowed apps: {exc}")
 
     def ended(self, problem):
         if self.closing or (problem is None and self.served):

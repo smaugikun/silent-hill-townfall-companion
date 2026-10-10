@@ -20,7 +20,6 @@ import urllib.request
 from dataclasses import dataclass, field
 
 OK, PROBLEM, NOTE, WAIT, UNKNOWN, CHECKING = "ok", "problem", "note", "wait", "unknown", "checking"
-RULE_NAME = "Townfall Companion (Python)"
 NETWORK_ADVICE = ("The phone must be on the Wi-Fi of the router this PC is connected to: not a guest network, and "
                   "with mobile data off. "
                   "Turn off any VPN on the phone. Some routers keep the devices on their Wi-Fi apart (a setting "
@@ -81,16 +80,25 @@ $survey = [ordered]@{
       $program = $_.Program
       $_ | Get-NetFirewallRule | ForEach-Object {
         $ports = $_ | Get-NetFirewallPortFilter
-        [pscustomobject]@{ Name = $_.Name; DisplayName = $_.DisplayName; Program = $program; Enabled = "$($_.Enabled)";
+        [pscustomobject]@{ DisplayName = $_.DisplayName; Program = $program; Enabled = "$($_.Enabled)";
           Direction = "$($_.Direction)"; Action = "$($_.Action)"; Profile = "$($_.Profile)";
           Protocol = "$($ports.Protocol)"; LocalPort = @($ports.LocalPort) } } } }
   products = Section { Get-CimInstance -Namespace root/SecurityCenter2 -ClassName FirewallProduct |
     ForEach-Object { $_.displayName } }
+  every_program = Section {
+    foreach ($key in 'HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules',
+                     'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules') {
+      if (Test-Path $key) { (Get-ItemProperty $key).PSObject.Properties | Where-Object { $_.Value -is [string] -and
+        $_.Value -match '\|Dir=In\|' -and $_.Value -notmatch '\|(App|Svc|AppPkgId|PFN|Security|LUAuth|RUAuth|RMauth|IF|IFType)=' } |
+        ForEach-Object { $_.Value } } } }
 }
 $json = ConvertTo-Json -InputObject $survey -Depth 5 -Compress
 [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
 """
-SECTIONS = ("addresses", "adapters", "routes", "profiles", "firewall", "rules", "products")
+SECTIONS = ("addresses", "adapters", "routes", "profiles", "firewall", "rules", "products", "every_program")
+# What a rule in Windows' own list can hold that every_program_rules() doesn't weigh: a rule with one of these is left
+# out, rather than guessed at.
+UNWEIGHED = {"RPort", "RPort2_10", "LPort2_10", "LA4", "LA6", "ICMP4", "ICMP6"}
 
 
 class _Pending:
@@ -107,7 +115,7 @@ class Step:
     state: str          # OK, PROBLEM, NOTE, WAIT, UNKNOWN or CHECKING
     found: str          # what the check found
     fix: str = ""       # what to do about it
-    action: str = None  # a button for it: "allow-python"
+    action: str = None  # a button for it: "allowed-apps", Windows' list of the apps its firewall lets in
 
 
 @dataclass
@@ -264,6 +272,7 @@ def firewall_verdict(survey, program, port, profile):
       "shielded"      it blocks everything, allowed apps too
       "blocked"       a rule blocks program; detail: the rule's name
       "allowed"       a rule lets program in; detail: the rule's name
+      "everyone"      a rule lets every program in; detail: the rule's name
       "elsewhere"     rules let program in on other profiles only; detail: those profiles
       "other-python"  no rule for program, but some for another python.exe; detail: its path
       "missing"       no rule at all
@@ -285,6 +294,9 @@ def firewall_verdict(survey, program, port, profile):
         rule = next((rule for rule in here if _action(rule) == action), None)
         if rule:
             return verdict, rule.get("DisplayName") or "(no name)"
+    for rule in every_program_rules(survey):
+        if _covers_port(rule, port) and _has_profile(rule["Profile"], profile):
+            return "everyone", rule["DisplayName"]
     elsewhere = sorted({name for rule in inbound if _action(rule) == "Allow"
                         for name in ("Domain", "Private", "Public") if _has_profile(rule.get("Profile", "Any"), name)})
     if elsewhere:
@@ -294,6 +306,33 @@ def firewall_verdict(survey, program, port, profile):
     if others:
         return "other-python", others[0]
     return "missing", None
+
+
+def every_program_rules(survey):
+    """The enabled rules that let every program in from the network, as rows like the survey's rules: from Windows'
+    own list, the lines of the rules with no program, service or app of their own (the survey leaves out the rest).
+    A line reads "v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=6|Profile=Public|LPort=8790|Name=...|"."""
+    rows = []
+    for line in survey.get("every_program") or []:
+        values = {}
+        for key, _, value in (part.partition("=") for part in str(line).split("|")[1:] if "=" in part):
+            values.setdefault(key, []).append(value)
+        remote = values.get("RA4", []) + values.get("RA6", [])
+        if (values.get("Action") != ["Allow"] or values.get("Active") != ["TRUE"] or values.get("Dir") != ["In"]
+                or values.keys() & UNWEIGHED or (remote and not {"LocalSubnet", "Any", "*"} & set(remote))):
+            continue  # one that only lets in this PC itself, or particular addresses, isn't the phone's way in
+        rows.append({"DisplayName": values.get("Name", ["(no name)"])[0], "Program": "Any", "Action": "Allow",
+                     "Profile": ", ".join(values.get("Profile", [])) or "Any",
+                     "Protocol": values.get("Protocol", ["Any"])[0], "LocalPort": values.get("LPort", ["Any"])})
+    return rows
+
+
+def _entry(survey, program):
+    """program's line in Windows' list of allowed apps, which also shows rules that are switched off: the name of one
+    of its inbound rules, or None if it has none."""
+    return next((rule["DisplayName"] for rule in survey["rules"] if same_program(rule.get("Program"), program)
+                 and _named(rule.get("Direction"), {1: "Inbound", 2: "Outbound"}) == "Inbound"
+                 and rule.get("DisplayName")), None)
 
 
 def _action(rule):
@@ -422,8 +461,17 @@ def firewall_step(found, reached=False):
     profile = network_profile(found)
     verdict, detail = firewall_verdict(found.survey, found.program, found.port, profile)
     python = f"Python ({found.program})"
-    allow = f"Click the button: Windows asks for permission, then its firewall lets Python in on {profile} networks."
-    if reached and verdict != "allowed" and not (verdict == "open" and not detail):
+
+    def allow(entry=None):
+        """What to tick in Windows' list of allowed apps: entry, this Python's line in it, or a new line for it."""
+        where = (f"find \"{entry}\" (Details... shows its path, which must be {found.program}), and tick the box "
+                 f"before its name and {profile} in its row" if entry else
+                 f"then Allow another app... → Browse... → paste {found.program} as the file name → Open → Add, and "
+                 f"tick {profile} in its row")
+        return (f"In Windows' list of allowed apps (the button opens it), click Change settings, {where}. Then OK, "
+                "and Check the connection.")
+
+    if reached and verdict not in ("allowed", "everyone") and not (verdict == "open" and not detail):
         return Step(title, OK, "A phone got through: the firewall lets it in.")
     if verdict == "unknown":
         return Step(title, UNKNOWN, "Not available: Windows didn't list its firewall settings.")
@@ -441,18 +489,20 @@ def firewall_step(found, reached=False):
     if verdict == "blocked":
         return Step(title, PROBLEM, f"A firewall rule named \"{detail}\" blocks {python} on {profile} networks. "
                     "Windows makes one when its question about Python is answered with Cancel, or for a kind of "
-                    "network left unticked there.",
-                    "Click the button: Windows asks for permission, then its firewall turns that rule off and lets "
-                    f"Python in on {profile} networks.", "allow-python")
+                    "network left unticked there.", allow(detail), "allowed-apps")
     if verdict == "allowed":
         return Step(title, OK, f"{python} may receive connections on {profile} networks (rule \"{detail}\").")
+    if verdict == "everyone":
+        return Step(title, OK, f"A firewall rule named \"{detail}\" lets every program in on {profile} networks, "
+                    "Python too.")
+    entry = _entry(found.survey, found.program)
     if verdict == "elsewhere":
         return Step(title, PROBLEM, f"{python} is allowed in on {' and '.join(detail)} networks only, and Windows "
-                    f"counts this network as {profile}.", allow, "allow-python")
+                    f"counts this network as {profile}.", allow(entry), "allowed-apps")
     if verdict == "other-python":
         return Step(title, PROBLEM, f"The firewall's rules are for another Python ({detail}), not for the one "
-                    f"that runs the companion ({found.program}).", allow, "allow-python")
-    return Step(title, PROBLEM, f"No firewall rule lets {python} in on {profile} networks.", allow, "allow-python")
+                    f"that runs the companion ({found.program}).", allow(entry), "allowed-apps")
+    return Step(title, PROBLEM, f"No firewall rule lets {python} in on {profile} networks.", allow(entry), "allowed-apps")
 
 
 def phone_address(found):
@@ -565,61 +615,7 @@ def this_program():
     return sys.executable
 
 
-def allow_rule(found):
-    """What the Allow button runs after Windows' permission prompt, as (program, arguments): PowerShell turns off the
-    rules that block the companion's Python on the kind of network the PC is on, and adds one that lets it in there.
-    The network itself stays as it is."""
-    profile = network_profile(found)
-    blocking = [rule["Name"] for rule in _inbound_rules(found.survey, found.program, found.port)
-                if _action(rule) == "Block" and _has_profile(rule.get("Profile", "Any"), profile) and rule.get("Name")] \
-        if found.survey else []
-    quoted = lambda text: "'" + str(text).replace("'", "''") + "'"
-    script = "\n".join([
-        "$ErrorActionPreference = 'Stop'",
-        "try {",
-        *(f"  Disable-NetFirewallRule -Name {quoted(name)}" for name in blocking),
-        f"  New-NetFirewallRule -DisplayName {quoted(RULE_NAME)} -Direction Inbound -Action Allow -Protocol TCP "
-        f"-Program {quoted(found.program)} -Profile {profile} "
-        f"-Description {quoted('Lets the phone open the Townfall Companion page.')} | Out-Null",
-        "  exit 0",
-        "} catch { exit 1 }",
-    ])
-    return powershell(), f"-NoProfile -NonInteractive -EncodedCommand {encoded(script)}"
-
-
-def run_elevated(program, arguments, wait_s=120):
-    """Runs program after Windows' permission prompt (UAC) and waits for it: its exit code, or None if the prompt
-    was declined. Windows only."""
-    import ctypes
-    from ctypes import wintypes
-
-    class ShellExecuteInfo(ctypes.Structure):
-        _fields_ = [("cbSize", wintypes.DWORD), ("fMask", wintypes.ULONG), ("hwnd", wintypes.HWND),
-                    ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
-                    ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
-                    ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
-                    ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
-
-    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    shell32.ShellExecuteExW.argtypes = (ctypes.POINTER(ShellExecuteInfo),)
-    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    see_mask_nocloseprocess, sw_hide, error_cancelled = 0x40, 0, 1223
-    info = ShellExecuteInfo(cbSize=ctypes.sizeof(ShellExecuteInfo), fMask=see_mask_nocloseprocess, lpVerb="runas",
-                            lpFile=program, lpParameters=arguments, nShow=sw_hide)
-    if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        error = ctypes.get_last_error()
-        if error == error_cancelled:
-            return None
-        raise ctypes.WinError(error)
-    if not info.hProcess:
-        return 0  # nothing to wait for: the check that follows says whether it worked
-    try:
-        kernel32.WaitForSingleObject(info.hProcess, wait_s * 1000)
-        code = wintypes.DWORD()
-        kernel32.GetExitCodeProcess(info.hProcess, ctypes.byref(code))
-        return code.value
-    finally:
-        kernel32.CloseHandle(info.hProcess)
+def open_allowed_apps(start=subprocess.Popen):
+    """Opens Windows' own list of the apps its firewall lets in (Allow an app through firewall), where the player
+    ticks Python themselves: the companion never changes the firewall."""
+    start([system_program("control.exe"), "/name", "Microsoft.WindowsFirewall", "/page", "pageConfigureApps"])

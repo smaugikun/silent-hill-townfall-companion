@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "TownfallCompanion" / "companion"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # test_netcheck's made-up surveys
 try:
     import tkinter
 except ImportError:
@@ -16,6 +17,7 @@ except ImportError:
 else:
     import gui
     import netcheck
+    from test_netcheck import measured, survey
 
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter")
@@ -48,6 +50,27 @@ class WindowTest(unittest.TestCase):
             self.assertIn("The companion on this PC", window.steps.get("1.0", "end"))
             self.assertIn("Townfall Companion 1.0.0", window.log.get("1.0", "end"))
             self.assertGreater(len(window.qr.find_all()), 100)  # the modules of a version 2 code
+        finally:
+            root.destroy()
+
+    def test_a_line_to_fix_has_its_button_and_check_the_connection_next_to_it(self):
+        try:
+            root = tkinter.Tk()
+        except tkinter.TclError:
+            self.skipTest("no screen")
+        try:
+            root.withdraw()
+            window = gui.Window(root)
+            window.served = True
+            window.findings = measured(survey(rules=[]))  # no rule lets Python in
+            window.show_steps()
+            self.assertEqual([button.cget("text") for button in window.step_buttons],
+                             ["Open Windows' allowed apps", "Check the connection"])
+            checks = []
+            window.check = lambda: checks.append(True)
+            window.show_steps()
+            window.step_buttons[1].invoke()
+            self.assertEqual(checks, [True])
         finally:
             root.destroy()
 

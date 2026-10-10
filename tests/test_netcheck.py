@@ -15,10 +15,9 @@ OTHER_PYTHON = r"C:\Program Files\Python311\python.exe"
 
 
 def rule(action, profile, protocol="TCP", program=PYTHON.lower(), ports=("Any",), enabled="True", name="python.exe"):
-    # Windows keeps the program of the rules its firewall question makes in lower case, and names them like this.
-    return {"Name": f"{protocol} Query User{{{action}-{profile}}}{program}", "DisplayName": name, "Program": program,
-            "Enabled": enabled, "Direction": "Inbound", "Action": action, "Profile": profile, "Protocol": protocol,
-            "LocalPort": list(ports)}
+    # Windows keeps the program of the rules its firewall question makes in lower case.
+    return {"DisplayName": name, "Program": program, "Enabled": enabled, "Direction": "Inbound", "Action": action,
+            "Profile": profile, "Protocol": protocol, "LocalPort": list(ports)}
 
 
 def firewall(enabled="True", inbound="Block", rules_too="True"):
@@ -197,19 +196,28 @@ PUBLIC = [{**HOME["profiles"][0], "NetworkCategory": "Public"}]
 
 class NetworkKindTest(unittest.TestCase):
     """Windows calls a network Private or Public and lets Python in by that kind. Either works once Python is
-    allowed in on it, so the check never asks to change the network: it lets Python in where the PC is."""
+    allowed in on it, so the check never asks to change the network: Python is to be let in where the PC is."""
 
-    def test_on_a_public_network_python_is_let_in_there(self):
+    def test_on_a_public_network_python_is_to_be_ticked_for_public(self):
         # Allowed on Private, blocked on Public: what Windows' question leaves when only Private was ticked.
         wall = step(measured(survey(profiles=PUBLIC)), "Windows Firewall")
-        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allow-python"))
+        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allowed-apps"))
         self.assertIn(f"A firewall rule named \"python.exe\" blocks Python ({PYTHON}) on Public networks", wall.found)
-        self.assertIn("turns that rule off and lets Python in on Public networks", wall.fix)
+        self.assertEqual(wall.fix, "In Windows' list of allowed apps (the button opens it), click Change settings, "
+                                   f"find \"python.exe\" (Details... shows its path, which must be {PYTHON}), and tick "
+                                   "the box before its name and Public in its row. Then OK, and Check the connection.")
         private_only = step(measured(survey(profiles=PUBLIC, rules=[rule("Allow", "Private")])), "Windows Firewall")
-        self.assertEqual((private_only.state, private_only.action), (netcheck.PROBLEM, "allow-python"))
+        self.assertEqual((private_only.state, private_only.action), (netcheck.PROBLEM, "allowed-apps"))
         self.assertIn("allowed in on Private networks only, and Windows counts this network as Public",
                       private_only.found)
-        self.assertIn("lets Python in on Public networks", private_only.fix)
+        self.assertIn("find \"python.exe\"", private_only.fix)
+        self.assertIn("and Public in its row", private_only.fix)
+        # Rules that are switched off are still in Windows' list, unticked: that line, not a new one.
+        switched_off = [rule("Allow", "Public", enabled="False"), rule("Allow", "Public", "UDP", enabled="False")]
+        wall = step(measured(survey(profiles=PUBLIC, rules=switched_off)), "Windows Firewall")
+        self.assertIn("No firewall rule lets", wall.found)
+        self.assertIn("find \"python.exe\"", wall.fix)
+        self.assertNotIn("Allow another app", wall.fix)
 
     def test_no_step_asks_to_change_the_network(self):
         for kind in ("Private", "Public", "DomainAuthenticated"):
@@ -220,7 +228,7 @@ class NetworkKindTest(unittest.TestCase):
                         self.assertNotRegex(each.fix, r"Make (it|the network)|profile type")
                         if kind != "Private":
                             self.assertNotIn("Private", each.fix)
-                        self.assertIn(each.action, (None, "allow-python"))
+                        self.assertIn(each.action, (None, "allowed-apps"))
 
     def test_a_public_network_where_python_is_allowed_is_fine_as_it_is(self):
         text = survey(
@@ -263,8 +271,8 @@ class FirewallTest(unittest.TestCase):
         rules = [rule("Allow", "Private"), rule("Block", "Private, Public", name="Python")]
         self.assertEqual(self.verdict(rules=rules), ("blocked", "Python"))
         wall = step(measured(survey(rules=rules)), "Windows Firewall")
-        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allow-python"))
-        self.assertIn("turns that rule off", wall.fix)
+        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allowed-apps"))
+        self.assertIn("find \"Python\"", wall.fix)  # ticking it in the list turns its block into an allow
 
     def test_allowed_on_another_profile_only(self):
         self.assertEqual(self.verdict(profile="Public", rules=[rule("Allow", "Private")]), ("elsewhere", ["Private"]))
@@ -276,8 +284,9 @@ class FirewallTest(unittest.TestCase):
         verdict = self.verdict(rules=[rule("Allow", "Private", program=OTHER_PYTHON)])
         self.assertEqual(verdict, ("other-python", OTHER_PYTHON))
         wall = step(measured(survey(rules=[rule("Allow", "Private", program=OTHER_PYTHON)])), "Windows Firewall")
-        self.assertEqual(wall.action, "allow-python")
+        self.assertEqual(wall.action, "allowed-apps")
         self.assertIn(f"for another Python ({OTHER_PYTHON})", wall.found)
+        self.assertIn(f"Allow another app... → Browse... → paste {PYTHON} as the file name", wall.fix)
 
     def test_the_same_python_written_differently_counts(self):
         rules = [rule("Allow", "Private", program=r"%LOCALAPPDATA%\Programs\Python\Python312\python.exe")]
@@ -295,8 +304,32 @@ class FirewallTest(unittest.TestCase):
     def test_no_rule_offers_the_button(self):
         self.assertEqual(self.verdict(rules=[]), ("missing", None))
         wall = step(measured(survey(rules=[])), "Windows Firewall")
-        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allow-python"))
+        self.assertEqual((wall.state, wall.action), (netcheck.PROBLEM, "allowed-apps"))
         self.assertIn("No firewall rule lets", wall.found)
+        self.assertIn("Allow another app...", wall.fix)
+
+    def test_a_rule_for_every_program_lets_python_in_too(self):
+        # As Windows keeps them: one for every program, and others that aren't (an app's, a service's, the PC's own).
+        lines = ["v2.33|Action=Allow|Active=TRUE|Dir=In|Name=Open house|",
+                 "v2.33|Action=Allow|Active=TRUE|Dir=In|RA4=127.0.0.1|Name=This PC only|",
+                 "v2.33|Action=Allow|Active=FALSE|Dir=In|Name=Switched off|",
+                 "v2.33|Action=Block|Active=TRUE|Dir=In|Name=Shut|"]
+        public, rules = [{**HOME["profiles"][0], "NetworkCategory": "Public"}], [rule("Allow", "Private")]
+        wall = step(measured(survey(profiles=public, rules=rules, every_program=lines)), "Windows Firewall")
+        self.assertEqual((wall.state, wall.action), (netcheck.OK, None))
+        self.assertEqual(wall.found, "A firewall rule named \"Open house\" lets every program in on Public networks, "
+                                     "Python too.")
+        for others in (lines[1:], ["v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=17|Name=UDP only|",
+                                   "v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=80|LPort=443|Name=Web|",
+                                   "v2.33|Action=Allow|Active=TRUE|Dir=In|Profile=Private|Name=At home|",
+                                   "v2.33|Action=Allow|Active=TRUE|Dir=In|RPort=53|Name=Answers|"]):
+            with self.subTest(others=others):
+                wall = step(measured(survey(profiles=public, rules=rules, every_program=others)), "Windows Firewall")
+                self.assertEqual(wall.state, netcheck.PROBLEM)
+        ranged = "v2.33|Action=Allow|Active=TRUE|Dir=In|Protocol=6|Profile=Public|LPort=8000-8800|RA4=LocalSubnet|Name=LAN|"
+        self.assertEqual(self.verdict(profile="Public", rules=rules, every_program=ranged), ("everyone", "LAN"))
+        # a rule for Python that blocks it still wins
+        self.assertEqual(self.verdict(profile="Public", every_program=lines)[0], "blocked")
 
     def test_disabled_outbound_and_other_port_rules_dont_count(self):
         for unhelpful in (rule("Allow", "Private", enabled="False"), {**rule("Allow", "Private"), "Direction": "Outbound"},
@@ -320,27 +353,12 @@ class FirewallTest(unittest.TestCase):
         self.assertIn("untick \"Blocks all incoming connections",
                       step(measured(survey(firewall=firewall(rules_too="False"))), "Windows Firewall").fix)
 
-    @staticmethod
-    def button(found):
-        program, arguments = netcheck.allow_rule(found)
-        script = base64.b64decode(arguments.split("-EncodedCommand ")[1]).decode("utf-16-le")
-        return program, script
-
-    def test_the_button_turns_off_what_blocks_python_here_and_lets_it_in(self):
-        program, script = self.button(measured(survey(profiles=PUBLIC)))
-        self.assertTrue(program.lower().endswith("powershell.exe"), program)
-        self.assertIn(f"New-NetFirewallRule -DisplayName '{netcheck.RULE_NAME}' -Direction Inbound -Action Allow "
-                      f"-Protocol TCP -Program '{PYTHON}' -Profile Public", script)
-        # the TCP rule that blocks it on Public networks; its UDP twin doesn't keep the phone out
-        disabled = [line.split("-Name ")[1] for line in script.splitlines() if "Disable-NetFirewallRule" in line]
-        self.assertEqual(disabled, [f"'{rule('Block', 'Public')['Name']}'"])
-        self.assertNotIn("NetConnectionProfile", script)  # the network stays as it is
-        self.assertIn("exit 0", script)
-
-    def test_on_a_private_network_without_rules_it_only_adds_one(self):
-        _, script = self.button(measured(survey(rules=[]), program=r"C:\Users\O'Neil\Python312\python.exe"))
-        self.assertNotIn("Disable-NetFirewallRule", script)
-        self.assertIn(r"-Program 'C:\Users\O''Neil\Python312\python.exe' -Profile Private", script)
+    def test_the_button_opens_windows_list_of_allowed_apps_and_changes_nothing_itself(self):
+        started = []
+        netcheck.open_allowed_apps(start=started.append)
+        (command,) = started
+        self.assertTrue(command[0].lower().endswith(r"\system32\control.exe"), command)
+        self.assertEqual(command[1:], ["/name", "Microsoft.WindowsFirewall", "/page", "pageConfigureApps"])
 
 
 class PhoneTest(unittest.TestCase):

@@ -22,11 +22,12 @@ program has taken port 8790, the companion uses the next free port and says so; 
 ### The Windows firewall
 
 The first time the companion starts, Windows asks whether Python may communicate on networks: allow it. If the
-phone still can't get in, the companion's window says why, and its **Allow Python through the firewall** button lets
-Python in on the network the PC is on
-([Troubleshooting](TROUBLESHOOTING.md#the-page-doesnt-open-or-keeps-saying-connection-lost)). By hand: Windows
-Security → *Firewall & network protection* → *Allow an app through firewall* → *Change settings* → find **Python**
-and tick the kind of network the PC is on, *Private* or *Public* (Settings → *Network & internet* shows which).
+phone still can't get in, the companion's window says why and what to tick, and its **Open Windows' allowed apps**
+button opens the list where you tick it
+([Troubleshooting](TROUBLESHOOTING.md#the-page-doesnt-open-or-keeps-saying-connection-lost)). Without the window:
+Windows Security → *Firewall & network protection* → *Allow an app through firewall* → *Change settings* → find
+**Python** and tick the kind of network the PC is on, *Private* or *Public* (Settings → *Network & internet* shows
+which).
 
 What stays on the PC: the game and the companion talk through files and shared memory on the PC, never over the
 network. Only the phone's page goes over the network, on the companion's port.
