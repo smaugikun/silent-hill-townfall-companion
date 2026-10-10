@@ -15,7 +15,7 @@ local M = {}
 
 local tracked = {} -- every enemy constructed since the level loaded; pruned as they go away
 local nearby = {}  -- within RANGE at the last update
-local enemyLog = {} -- enemy name -> last logged alert/death (for [TF-ENEMY] change lines), signal source and video
+local enemyLog = {} -- enemy name -> last logged alert/death (for [TF-ENEMY] change lines) and signal source
 
 -- FindAllOf walks every UObject (~20 ms in Townfall), too slow to repeat during play.
 -- Enemies are spawned on demand, so hear about them as they're constructed instead.
@@ -34,8 +34,7 @@ local function staticSource(e)
     return ok and source and source:IsValid() and source or nil
 end
 
--- What the enemy's signal source says about tuning in, reach (cm) and its clip; constant per enemy.
--- The tuned-in CRTV plays a prerecorded clip from Content/Movies/CRTV_Movies, which the phone plays too.
+-- What the enemy's signal source says about tuning in and reach (cm); constant per enemy.
 local function readSourceInfo(source)
     local ok, info = pcall(function()
         return {
@@ -46,14 +45,14 @@ local function readSourceInfo(source)
                 outdoor = { source.distanceSignalFalloffBegin_ActiveOutdoor, source.distanceSignalCutoff_ActiveOutdoor },
                 indoor = { source.distanceSignalFalloffBegin_ActiveIndoor, source.distanceSignalCutoff_ActiveIndoor },
             },
-            video = common.videoPath(source.CrtvVideoSignal_Url, common.CRTV_VIDEO),
         }
     end)
     return ok and type(info.channel) == "number" and info or nil
 end
 
 -- How strongly a raised CRTV would pick the enemy up at this distance, from its own falloff and
--- cutoff (the game also weighs line of sight and elevation). Feeds the phone's own scanner.
+-- cutoff (the game also weighs line of sight and elevation). The phone reads the signals by it while the game's
+-- CRTV is down (static/scanner.js).
 local function rangeSignal(info, distance, indoor)
     local falloff = info and info.reach[indoor and "indoor" or "outdoor"]
     return falloff and common.falloff(distance, falloff[1], falloff[2]) or 0
@@ -88,8 +87,8 @@ local function read(e, name)
         log("TF-ENEMY", "new %s alert=%s dead=%s", e:GetFullName(), enemy.alert, tostring(enemy.dead))
         local source = staticSource(e)
         enemy.source = source and readSourceInfo(source)
-        if enemy.source then  -- the clip names the kind of monster the phone shows (static/monsters.js)
-            log("TF-ENEMY", "%s crtv channel %.3f clip %s", enemy.name, enemy.source.channel, enemy.source.video or "none")
+        if enemy.source then
+            log("TF-ENEMY", "%s crtv channel %.3f", enemy.name, enemy.source.channel)
         else
             log("TF-ENEMY", "%s %s", enemy.name, source and "crtv source unreadable" or "has no RadioStaticSource")
         end
@@ -98,11 +97,6 @@ local function read(e, name)
     end
     enemyLog[enemy.name] = { alert = enemy.alert, dead = enemy.dead, source = enemy.source }
     return enemy
-end
-
--- The enemies within RANGE at the last update.
-function M.nearby()
-    return nearby
 end
 
 -- One full walk right after a level load, where a hitch goes unnoticed. It also
@@ -143,7 +137,6 @@ end
 -- rangeSignal: what a raised CRTV would pick up at this distance, whether or not it is raised.
 -- channel: dial position (0..1) the enemy tunes in at; tolerance: how near the dial must be for it to come
 -- in clear, toleranceOuter: for it to come in at all; null without a readable signal source.
--- video: the enemy's tuned-in clip under Content/Movies/CRTV_Movies without extension, or null.
 function M.json(crtvState)
     local ok, reader = pcall(crtv.sourceReader, crtvState)
     if not ok then
@@ -161,12 +154,12 @@ function M.json(crtvState)
             local info = enemy.source
             local x, y = common.toPhone(enemy.loc)
             out[#out + 1] = string.format('{"id":%s,"x":%.2f,"y":%.2f,"alive":%s,"signal":%.2f,"detected":%s,"tuned":%s,'
-                .. '"rangeSignal":%.2f,"channel":%s,"tolerance":%s,"toleranceOuter":%s,"video":%s}',
+                .. '"rangeSignal":%.2f,"channel":%s,"tolerance":%s,"toleranceOuter":%s}',
                 common.jsonString(enemy.name), x, y, tostring(not enemy.dead),
                 signal, tostring(signal > 0), tostring(view ~= nil and view.tuned),
                 rangeSignal(info, common.distance(enemy.loc, p), indoor),
                 common.jsonNumber(info and info.channel, "%.3f"), common.jsonNumber(info and info.tolerance, "%.3f"),
-                common.jsonNumber(info and info.toleranceOuter, "%.3f"), common.jsonString(info and info.video))
+                common.jsonNumber(info and info.toleranceOuter, "%.3f"))
         end
     end
     return table.concat(out, ",")

@@ -1,10 +1,14 @@
 __pycache__/
 *.pyc
 
-# Made on each PC, never committed or shipped: the settings, what is made from the game, downloaded tools.
+# Made on each PC, never committed or shipped: the settings.
 TownfallCompanion/companion.ini
-TownfallCompanion/cache/
-# The tools folder keeps only its notes (PUT FILES HERE.txt, saying what goes where); the programs stay out.
-TownfallCompanion/tools/**
-!TownfallCompanion/tools/**/
-!TownfallCompanion/tools/**/PUT FILES HERE.txt
+
+# Made by native/build.py; and the installed game's profile, by the companion (game_profile.py).
+native/build/
+TownfallCompanion/Scripts/tf_native.dll
+TownfallCompanion/Scripts/tf_native.profile
+TownfallCompanion/Scripts/tf_native.tmp
+
+# The release archive, made by tools/package.py.
+dist/

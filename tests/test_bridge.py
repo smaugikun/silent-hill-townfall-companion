@@ -3,8 +3,13 @@
     python -m unittest discover -s tests -v
 """
 import ctypes
+import html
+import http.client
+import io
 import json
 import queue
+import re
+import runpy
 import shutil
 import socket
 import subprocess
@@ -12,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -29,49 +35,17 @@ def free_port():
 
 class BridgeTest(unittest.TestCase):
     extra_args = ()
-    vgmstream = True  # False: the bridge gets a vgmstream that isn't there
-
-    # The fake game's sound banks (tests/fake_vgmstream.py reads them): stream names, one per line.
-    BANKS = {
-        "Environment": ["CRTV_NoSignal_Loop", "CRTV_Tuning_StaticClick_01", "AMB_Rain_Loop"],
-        "PlayerFoley": ["PROP_HAP_CRTV_Rise", "FS_Step_01"],
-        "Cinematics_EN": ["WakeUp_71_DX", "WakeUp_20_MX"],
-        "Dialogue_EN": ["10c5"],
-    }
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
+        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)  # a just-written heartbeat: see ReplaceOlderTest
         root = Path(cls.tmp.name)
-        cls.clips = root / "clips"
-        (cls.clips / "Bink").mkdir(parents=True)
-        cls.clip_bytes = bytes(range(256)) * 40
-        (cls.clips / "Bink" / "Enraged_Focused.mp4").write_bytes(cls.clip_bytes)
-        cls.banks = root / "Townfall-install" / "Townfall" / "Content" / "FMOD" / "Banks" / "Desktop"
-        cls.banks.mkdir(parents=True)
-        for bank, names in cls.BANKS.items():
-            (cls.banks / f"{bank}.bank").write_text("\n".join(names), encoding="utf-8")
-        (cls.banks / "BinkAudio.bank").write_text("Lazy\nPrecache", encoding="utf-8")
-        movie = root / "Townfall-install" / "Townfall" / "Content" / "Movies" / "CRTV_Movies" / "Bink" / "Lazy.bk2"
-        movie.parent.mkdir(parents=True)
-        movie.write_text("bink", encoding="utf-8")
-        (movie.parent / "Precache.bk2").write_text("bink precache", encoding="utf-8")
-        vgmstream = root / "vgmstream.cmd"
-        vgmstream.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_vgmstream.py")}" %*\n')
-        radvideo = root / "radvideo.cmd"
-        ffmpeg = root / "ffmpeg.cmd"
-        radvideo.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_video_tools.py")}" radvideo %*\n')
-        ffmpeg.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_video_tools.py")}" ffmpeg %*\n')
-        (root / "secret.txt").write_text("not a clip")
         cls.telemetry = root / "game" / "townfall-companion-telemetry.json"
         cls.telemetry.parent.mkdir()
         cls.port = free_port()
         cls.bridge = subprocess.Popen(
             [sys.executable, "-u", str(BRIDGE), "--host", "127.0.0.1", "--port", str(cls.port),
-             "--clips-dir", str(cls.clips), "--telemetry-file", str(cls.telemetry),
-             "--game-dir", str(root / "Townfall-install"), "--sound-cache", str(root / "sound-cache"),
-             "--vgmstream", str(vgmstream if cls.vgmstream else root / "missing" / "vgmstream-cli.exe"),
-             "--radvideo", str(radvideo), "--ffmpeg", str(ffmpeg),
+             "--telemetry-file", str(cls.telemetry),
              "--settings", str(root / "companion.ini"), "--pin", "", *cls.extra_args],  # no PIN unless a test asks
             # Not into a pipe: the bridge logs every request, and a pipe nobody reads fills up and blocks it.
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -122,78 +96,56 @@ class BridgeTest(unittest.TestCase):
             return e.code
 
 
-class SoundTest(BridgeTest):
-    """The game's sounds, read from its banks as the phone asks for them."""
+class ConnectionTest(BridgeTest):
+    """The phone sends many small requests a second: they share one kept-open connection, and the two responses that
+    run on close theirs when they end."""
 
-    def decoded(self, bank):
-        log = self.banks / f"{bank}.bank.decoded"
-        return log.read_text(encoding="utf-8").split() if log.exists() else []
+    def test_many_requests_go_over_one_connection(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            for _ in range(3):
+                connection.request("POST", "/api/control", body=json.dumps({"type": "confirm"}),
+                                   headers={"Content-Type": "application/json"})
+                response = connection.getresponse()
+                self.assertEqual((response.status, json.loads(response.read())), (200, {"ok": True}))
+                self.assertNotEqual(response.getheader("Connection"), "close")
+            connection.request("GET", "/app.js")
+            response = connection.getresponse()
+            self.assertEqual((response.status, response.getheader("Content-Type")), (200, "text/javascript"))
+            response.read()
+            connection.request("GET", "/api/state")
+            self.assertEqual(connection.getresponse().status, 200)
+        finally:
+            connection.close()
 
-    def test_the_list_holds_what_the_phone_plays(self):
-        status, _, body = self.get("/sounds/sounds.json")
-        self.assertEqual((status, json.loads(body)), (200, {
-            "sounds": ["CRTV_NoSignal_Loop", "CRTV_Tuning_StaticClick_01", "PROP_HAP_CRTV_Rise"],
-            "dialogue": ["WakeUp_71_DX"], "lines": ["10c5"]}))
+    def test_a_refused_body_is_read_and_dropped_and_the_connection_carries_on(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("POST", "/api/control", body="x" * 5000, headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual((response.status, response.getheader("Connection")), (400, None))
+            connection.request("GET", "/api/state")
+            self.assertEqual(connection.getresponse().status, 200)
+        finally:
+            connection.close()
 
-    def test_a_sound_is_decoded_once_and_kept(self):
-        for path in ("/sounds/lines/10c5.wav", "/sounds/lines/10c5.wav", "/sounds/dialogue/WakeUp_71_DX.wav",
-                     "/sounds/CRTV_NoSignal_Loop.wav"):
-            status, headers, body = self.get(path)
-            self.assertEqual((status, headers["Content-Type"], body[:4]), (200, "audio/wav", b"RIFF"), path)
-        self.assertEqual(self.decoded("Dialogue_EN"), ["10c5"])
-        self.assertEqual(self.decoded("Cinematics_EN"), ["WakeUp_71_DX"])
-        ranged = self.get("/sounds/lines/10c5.wav", {"Range": "bytes=0-3"})  # the phone seeks in long tracks
-        self.assertEqual((ranged[0], ranged[2]), (206, b"RIFF"))
+    def test_a_body_of_no_telling_length_closes_the_connection(self):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as raw:
+            raw.sendall(b"POST /api/control HTTP/1.1\r\nHost: phone\r\nContent-Length: lots\r\n\r\n{}")
+            answer = b""
+            while chunk := raw.recv(4096):
+                answer += chunk
+        self.assertTrue(answer.startswith(b"HTTP/1.1 400"), answer[:40])
+        self.assertIn(b"\r\nConnection: close\r\n", answer)
 
-    def test_only_listed_sounds(self):
-        for path in ("/sounds/AMB_Rain_Loop.wav", "/sounds/lines/nope.wav", "/sounds/WakeUp_20_MX.wav",
-                     "/sounds/../clips/Bink/Enraged_Focused.mp4", "/sounds/lines/..%2F..%2Fsecret.txt.wav"):
-            self.assertEqual(self.get(path)[0], 404, path)
-
-
-class NoVgmstreamTest(BridgeTest):
-    vgmstream = False
-
-    def test_no_sounds_and_the_reason(self):
-        status, _, body = self.get("/sounds/sounds.json")
-        self.assertEqual(status, 404)
-        error = json.loads(body)["error"]
-        self.assertIn("missing vgmstream-cli.exe (not at", error)
-        self.assertIn("set vgmstream in companion.ini", error)  # and what to do about it
-        self.assertEqual(self.get("/sounds/CRTV_NoSignal_Loop.wav")[0], 404)
-        self.assertEqual(self.get("/api/state")[0], 200)  # the rest carries on
-
-
-class ClipTest(BridgeTest):
-    def test_whole_clip(self):
-        status, headers, body = self.get("/clips/Bink/Enraged_Focused.mp4")
-        self.assertEqual((status, headers["Content-Type"], body), (200, "video/mp4", self.clip_bytes))
-
-    def test_an_uncached_game_video_is_converted_once_when_requested(self):
-        path = "/clips/Bink/Lazy.mp4"
-        self.assertFalse((self.clips / "Bink" / "Lazy.mp4").exists())
-        status, headers, body = self.get(path)
-        made = json.loads(body)
-        self.assertEqual((status, headers["Content-Type"], made["video"]), (200, "video/mp4", "libx264"))
-        decoded = self.banks / "BinkAudio.bank.decoded"
-        self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
-
-        # The second request is the cached MP4: no second RAD/FFmpeg/vgmstream conversion.
-        status, _, again = self.get(path)
-        self.assertEqual((status, json.loads(again)), (200, made))
-        self.assertEqual(decoded.read_text(encoding="utf-8").split(), ["Lazy"])
-
-    def test_byte_ranges(self):
-        for header, expected in (("bytes=100-199", self.clip_bytes[100:200]),
-                                 ("bytes=10000-", self.clip_bytes[10000:]),
-                                 ("bytes=-50", self.clip_bytes[-50:])):
-            status, _, body = self.get("/clips/Bink/Enraged_Focused.mp4", {"Range": header})
-            self.assertEqual((status, body), (206, expected), header)
-        self.assertEqual(self.get("/clips/Bink/Enraged_Focused.mp4", {"Range": "bytes=20000-"})[0], 416)
-
-    def test_nothing_outside_the_clips_folder(self):
-        for path in ("/clips/../secret.txt", "/clips/..%2Fsecret.txt", "/clips/Bink/missing.mp4"):
-            self.assertEqual(self.get(path)[0], 404, path)
+    def test_the_event_feed_pings_and_closes_its_connection(self):
+        with urllib.request.urlopen(self.url("/events"), timeout=10) as feed:
+            self.assertEqual(feed.headers["Connection"], "close")
+            self.assertTrue(feed.readline().startswith(b"data: "))  # the state at once
+            lines = [feed.readline() for _ in range(2)]
+            while lines[-2:] != [b"event: ping\n", b"data: {}\n"]:  # within 5 s when nothing else comes
+                lines.append(feed.readline())
 
 
 class StaticTest(BridgeTest):
@@ -204,13 +156,19 @@ class StaticTest(BridgeTest):
         with urllib.request.urlopen(urllib.request.Request(self.url("/style.css"), method="HEAD"), timeout=5) as r:
             self.assertEqual(r.headers["Cache-Control"], "no-cache")
         self.assertEqual(self.get("/app.js")[1]["Content-Type"], "text/javascript")
-        self.assertEqual(self.get("/monster/lunger.webp")[1]["Content-Type"], "image/webp")
 
-    def test_clips_and_api_keep_their_own_caching(self):
-        _, headers, _ = self.get("/clips/Bink/Enraged_Focused.mp4")
-        self.assertEqual(headers["Cache-Control"], "no-cache")  # re-converted clips must reach the phone
-        again = self.get("/clips/Bink/Enraged_Focused.mp4", {"If-Modified-Since": headers["Last-Modified"]})
-        self.assertEqual(again[0], 304)
+    def test_the_connection_check_says_where_to_go_next(self):
+        status, headers, body = self.get("/check")
+        page = body.decode("utf-8")
+        self.assertEqual((status, headers["Content-Type"]), (200, "text/html; charset=utf-8"))
+        self.assertIn(f"Your phone reached Townfall Companion on {html.escape(socket.gethostname())}.", page)
+        self.assertIn(f"Now open http://127.0.0.1:{self.port}.", page)  # no PIN to enter
+        # The address comes from the request, so it is shown as text, never as markup.
+        tricky = self.get("/check", {"Host": "<b>x</b>"})[2].decode("utf-8")
+        self.assertIn("Now open http://&lt;b&gt;x&lt;/b&gt;.", tricky)
+        self.assertNotIn("<b>x</b>", tricky)
+
+    def test_the_api_is_never_cached(self):
         self.assertEqual(self.get("/api/state")[1]["Cache-Control"], "no-store")
 
 
@@ -233,22 +191,14 @@ class CommandTest(BridgeTest):
         self.assertTrue(written["animate"])
 
     def test_steer_command_and_rising_seq(self):
-        self.post("/api/control", {"type": "steer", "yaw": 370, "pitch": -100})
+        self.assertEqual(self.post("/api/control", {"type": "steer", "yaw": 10, "pitch": -100}), 400)  # past straight down
+        self.post("/api/control", {"type": "steer", "yaw": 370, "pitch": -12.5})
         first = self.command_file("townfall-companion-steer.json")
-        self.assertEqual(list(first), ["yaw", "seq"])  # the heading only: the mod turns the player by yaw, tilt is the phone's
-        self.post("/api/control", {"type": "steer", "yaw": -10})
+        self.assertEqual(list(first), ["yaw", "pitch", "seq"])  # the heading and the tilt: the mod turns and tilts by both
+        self.post("/api/control", {"type": "steer", "yaw": -10})  # a page from before sends the heading only
         second = self.command_file("townfall-companion-steer.json")
-        self.assertEqual((first["yaw"], second["yaw"]), (10.0, 350.0))
+        self.assertEqual((first["yaw"], first["pitch"], second["yaw"], list(second)), (10.0, -12.5, 350.0, ["yaw", "seq"]))
         self.assertGreater(second["seq"], first["seq"])
-
-    def test_record_command(self):
-        self.assertEqual(self.post("/api/control", {"type": "record", "on": True}), 200)
-        self.assertEqual(list(self.command_file("townfall-companion-record.json")), ["on", "seq"])
-        self.assertTrue(self.command_file("townfall-companion-record.json")["on"])
-        self.assertEqual(self.post("/api/control", {"type": "record", "on": False}), 200)
-        self.assertFalse(self.command_file("townfall-companion-record.json")["on"])
-        for body in ({"type": "record"}, {"type": "record", "on": "yes"}, {"type": "record", "on": 1}):
-            self.assertEqual(self.post("/api/control", body), 400, body)
 
     def test_bad_commands_are_refused(self):
         for body in ({"type": "crtv", "active": "yes", "frequency": 0.2},
@@ -263,10 +213,9 @@ class CommandTest(BridgeTest):
     def test_sound_request_for_the_game(self):
         self.assertEqual(self.post("/api/control", {"type": "audio", "muteGame": True}), 200)
         sent = self.command_file("townfall-companion-audio.json")
-        self.assertEqual((sent["muteGame"], sent["dialogue"], sent["video"]), (True, False, False))
-        self.assertEqual(self.post("/api/control", {"type": "audio", "muteGame": True, "video": True}), 200)
-        self.assertEqual(self.command_file("townfall-companion-audio.json")["video"], True)
-        for body in ({"type": "audio", "muteGame": "yes"}, {"type": "audio", "muteGame": True, "video": "yes"}):
+        self.assertEqual(list(sent), ["muteGame", "seq"])
+        self.assertIs(sent["muteGame"], True)
+        for body in ({"type": "audio", "muteGame": "yes"}, {"type": "audio"}):
             self.assertEqual(self.post("/api/control", body), 400, body)
 
     def test_confirm_is_a_bare_press(self):
@@ -288,7 +237,7 @@ class GameLiveTest(BridgeTest):
     def test_game_live_follows_the_telemetry_file(self):
         state = json.loads(self.get("/api/state")[2])
         self.assertFalse(state["gameLive"])
-        self.assertEqual(state["bridge"], 11)  # static/app.js warns about older bridges
+        self.assertEqual(state["bridge"], 31)  # static/app.js warns about older bridges
         self.assertRegex(state["page"], r"^[0-9a-f]{12}$")  # an open page reloads when its files change
         self.telemetry.write_text(json.dumps({"t": 812.25, "world": 30.5, "player": {"x": 1, "y": 2, "yaw": 3},
                                               "signals": [{"id": "Clinic", "channel": 0.15}]}))
@@ -298,12 +247,23 @@ class GameLiveTest(BridgeTest):
         self.assertEqual((state["player"]["yaw"], state["signals"]), (3, [{"id": "Clinic", "channel": 0.15}]))
         self.assertEqual(state["t"], 812.25)  # the game's clock, which the phone times speech by
         self.assertEqual(state["world"], 30.5)  # the world's, which stands still while the game is paused
-        # Going live starts one background worker that fills missing video cache entries without a phone request.
-        deadline = time.time() + 5
-        precached = self.clips / "Bink" / "Precache.mp4"
-        while not precached.is_file() and time.time() < deadline:
-            time.sleep(0.05)
-        self.assertTrue(precached.is_file())
+
+
+class SampleTimingTest(unittest.TestCase):
+    def test_the_phone_calls_samples_stopped_only_after_an_unchanged_one_would_have_come(self):
+        """A player standing still gets an unchanged sample only every KEEPALIVE_S (main.lua); the phone holds the
+        picture, sound and alignment after SAMPLE_GAP_MS (app.js) without one, and the bridge calls the game gone
+        after TELEMETRY_STALE_AFTER. Past the keepalive, the 100 ms sample loop and the bridge's 50 ms poll, short
+        of the game gone."""
+        main = (COMPANION.parent / "Scripts" / "main.lua").read_text(encoding="utf-8")
+        page = (COMPANION / "static" / "app.js").read_text(encoding="utf-8")
+        bridge = BRIDGE.read_text(encoding="utf-8")
+        keepalive = float(re.search(r"^local KEEPALIVE_S = ([\d.]+)", main, re.M).group(1))
+        sample_ms = int(re.search(r"^local SAMPLE_MS = (\d+)", main, re.M).group(1))
+        gap = int(re.search(r"^const SAMPLE_GAP_MS = (\d+);", page, re.M).group(1))
+        stale = float(re.search(r"^TELEMETRY_STALE_AFTER = ([\d.]+)", bridge, re.M).group(1))
+        self.assertLess(keepalive * 1000 + sample_ms + 50, gap * 0.5)  # a late write or two still fits
+        self.assertLess(gap, stale * 1000)
 
 
 class TelemetryReadTest(BridgeTest):
@@ -313,7 +273,11 @@ class TelemetryReadTest(BridgeTest):
         # Held with no sharing, as Windows holds a file while it is replaced: every read fails meanwhile.
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateFileW.restype = ctypes.c_void_p
-        handle = kernel32.CreateFileW(str(self.telemetry), 0x80000000, 0, None, 3, 0, None)  # GENERIC_READ, OPEN_EXISTING
+        for _ in range(50):  # the bridge may be reading it this very moment (sharing violation): try again
+            handle = kernel32.CreateFileW(str(self.telemetry), 0x80000000, 0, None, 3, 0, None)  # GENERIC_READ, OPEN_EXISTING
+            if handle != ctypes.c_void_p(-1).value:
+                break
+            time.sleep(0.01)
         self.assertNotEqual(handle, ctypes.c_void_p(-1).value, ctypes.get_last_error())
         try:
             time.sleep(0.5)
@@ -325,87 +289,19 @@ class TelemetryReadTest(BridgeTest):
 
 
 class CutsceneTest(BridgeTest):
-    def test_the_cutscene_video_comes_and_goes(self):
-        video = {"video": "Cutscene_Diegetic_Movies/Bink/Cutscene_WatchingZoesSignal_1", "videoTime": 1.5}
-        self.telemetry.write_text(json.dumps({"cutscene": video}))
-        self.state_when(lambda s: s["cutscene"] == video)
+    def test_the_cutscene_comes_and_goes(self):
+        cutscene = {"sequence": "LS_WatchingZoesSignal", "sequenceTime": 1.5}
+        self.telemetry.write_text(json.dumps({"cutscene": cutscene}))
+        self.state_when(lambda s: s["cutscene"] == cutscene)
         self.telemetry.write_text(json.dumps({"cutscene": None}))
         self.state_when(lambda s: s["cutscene"] is None)
 
 
-
-class DemoPriorityTest(BridgeTest):
-    """The demo game (--demo, for development) gives way to the real game, and comes back when it stops."""
-    extra_args = ("--demo",)
-
-    def test_the_real_game_first(self):
-        state = self.state_when(lambda s: s["gameLive"] and s["demo"] and s["enemies"])
-        self.assertEqual(len(state["enemies"]), 4)
-        self.telemetry.write_text(json.dumps({"player": {"x": 1, "y": 2, "yaw": 3}, "enemies": [],
-                                              "cutscene": {"video": "Cutscene_Diegetic_Movies/Left_Over"}}))
-        self.state_when(lambda s: s["gameLive"] and not s["demo"] and s["player"]["yaw"] == 3)
-        # The game stops as it really does, leaving the file unwritten (deleting it here raced the bridge
-        # reading it: Windows refuses to delete an open file). The demo goes on, without the game's cutscene.
-        self.state_when(lambda s: s["demo"] and s["cutscene"] is None, timeout=4)
-
-    def test_the_phone_cant_switch_it(self):
-        self.assertEqual(self.post("/api/demo", {"on": False}), 404)
-
-
-class DemoTest(BridgeTest):
-    extra_args = ("--demo",)
-
-    def test_demo_game_follows_the_phone(self):
-        state = self.state_when(lambda s: s["gameLive"] and s["signals"])
-        self.assertTrue(state["crtv"]["active"])  # the simulated player starts with the CRTV up
-        self.assertTrue(all("rangeSignal" in e and "tolerance" in e for e in state["enemies"]))
-
-        self.post("/api/control", {"type": "crtv", "active": False, "frequency": 0.3})
-        self.state_when(lambda s: not s["crtv"]["active"] and s["crtv"]["frequency"] == 0)
-        self.post("/api/control", {"type": "crtv", "active": True, "frequency": 0.3})
-        self.state_when(lambda s: s["crtv"]["active"] and s["crtv"]["frequency"] == 0.3)
-        time.sleep(0.5)  # held by the phone: the simulated player doesn't sweep it away
-        self.assertEqual(json.loads(self.get("/api/state")[2])["crtv"]["frequency"], 0.3)
-
-        self.post("/api/control", {"type": "steer", "yaw": 350})  # the phone's heading: a starting point
-        time.sleep(0.3)
-        start = json.loads(self.get("/api/state")[2])["player"]["yaw"]
-        self.post("/api/control", {"type": "steer", "yaw": 20})  # the phone turned 30 degrees clockwise
-        self.state_when(lambda s: abs((s["player"]["yaw"] - start - 30 + 180) % 360 - 180) < 0.2)
-
-        # On the waypoint's channel the fine-tune mini-game runs; a press on the diamond finds it, and
-        # then the demo CRTV's screen plays its video, as the mod reports the game's.
-        self.post("/api/control", {"type": "crtv", "active": True, "frequency": 0.15})
-        state = self.state_when(lambda s: s["crtv"]["fineTune"] is not None)
-        self.assertEqual((state["crtv"]["signalType"], state["crtv"]["video"]), ("waypoint", None))
-        deadline = time.time() + 8
-        while time.time() < deadline:  # the box passes the diamond every 1.2 s; keep pressing near it
-            state = json.loads(self.get("/api/state")[2])
-            if state["crtv"]["signalType"] == "waypoint_tuned":
-                break
-            tune = state["crtv"]["fineTune"]
-            if tune and abs(tune["box"] - tune["zone"]) < 0.12:
-                self.post("/api/control", {"type": "confirm"})
-            time.sleep(0.03)
-        self.assertEqual((state["crtv"]["video"], state["crtv"]["fineTune"], state["signals"][0]["found"]),
-                         ("Bink/Video_CRTV_Room204Door_Signal", None, True))
-
-        # On its channel the waypoint talks, clear now it is found, a line from the game's banks; each
-        # sample stamped with the demo's clock.
-        first = self.state_when(lambda s: (s["signals"][0]["dialogue"] or {}).get("clear"))
-        said = first["signals"][0]["dialogue"]
-        self.assertEqual((said["line"], said["id"]), ("10c5", "demo-waypoint"))
-        later = self.state_when(lambda s: s["t"] > first["t"] + 0.5 and s["signals"][0]["dialogue"])
-        progress = later["signals"][0]["dialogue"]["ms"] - said["ms"]
-        self.assertAlmostEqual(progress / 1000, later["t"] - first["t"], delta=0.05)  # in step with the clock
-        self.state_when(lambda s: s["signals"][0]["dialogue"] is None, timeout=3)  # 2 s long, then a breath
-
-
 class StartupTest(unittest.TestCase):
-    """How the bridge starts: its settings file, its port, and the game found from where it is installed."""
+    """How the bridge starts: its settings file, its port, and what it says."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)  # see ReplaceOlderTest
         self.root = Path(self.tmp.name)
         self.bridges = []
 
@@ -421,10 +317,10 @@ class StartupTest(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, "-u", str(bridge), "--host", "127.0.0.1",
              "--telemetry-file", str(self.root / f"telemetry{len(self.bridges)}.json"),  # one each: they would see each other
-             "--sound-cache", str(self.root / "sounds"), "--pin", "", *args],
+             "--pin", "", *args],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.bridges.append(process)
-        lines = queue.Queue()
+        lines = self.lines = queue.Queue()
         # Read it all, so the request log can't fill the pipe and stall the bridge.
         threading.Thread(target=lambda: [lines.put(line) for line in process.stdout], daemon=True).start()
         output = ""
@@ -446,9 +342,22 @@ class StartupTest(unittest.TestCase):
         text = settings.read_text(encoding="utf-8")
         self.assertIn("port = 8790", text)
         self.assertIn("listen = 0.0.0.0", text)
-        self.assertIn("[paths]", text)
         pin = [line for line in text.splitlines() if line.startswith("pin =")][0].split("=")[1].strip()
         self.assertRegex(pin, r"^\d{4}$")  # a new settings file gets a random PIN
+
+    def test_the_phones_mode_is_shown_when_it_changes_not_each_time_the_phone_says_it(self):
+        _, port = self.start("--settings", str(self.root / "companion.ini"), "--port", str(free_port()))
+        for selector in ("VIEW", "VIEW", "VIEW", "AV_OUT"):
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/api/control", method="POST",
+                                             headers={"Content-Type": "application/json"},
+                                             data=json.dumps({"type": "mode", "selector": selector,
+                                                              "onMonitor": False, "miniGameShown": False}).encode())
+            with urllib.request.urlopen(request, timeout=5) as r:
+                self.assertEqual(r.status, 200)
+        output = ""
+        while "phone switched to AV_OUT" not in output:
+            output += self.lines.get(timeout=5)
+        self.assertEqual(output.count("phone switched to VIEW"), 1)
 
     def test_the_port_comes_from_the_settings(self):
         port = free_port()
@@ -479,21 +388,18 @@ class StartupTest(unittest.TestCase):
         self.assertNotEqual(run.returncode, 0)
         self.assertIn("port must be a number from 1 to 65535, not 'eighty'", run.stderr)
 
-    def test_the_game_is_found_from_where_the_mod_is_installed(self):
-        game = self.root / "Townfall-install"
-        banks = game / "Townfall" / "Content" / "FMOD" / "Banks" / "Desktop"
-        banks.mkdir(parents=True)
-        (banks / "Environment.bank").write_text("CRTV_NoSignal_Loop", encoding="utf-8")
-        mod = game / "Townfall" / "Binaries" / "Win64" / "ue4ss" / "Mods" / "TownfallCompanion"
+    def test_its_settings_live_in_the_mods_folder(self):
+        mod = self.root / "Townfall" / "Binaries" / "Win64" / "ue4ss" / "Mods" / "TownfallCompanion"
         shutil.copytree(COMPANION, mod / "companion", ignore=shutil.ignore_patterns("__pycache__"))
-        vgmstream = self.root / "vgmstream.cmd"
-        vgmstream.write_text(f'@"{sys.executable}" "{Path(__file__).with_name("fake_vgmstream.py")}" %*\n')
-        output, port = self.start("--port", str(free_port()), "--vgmstream", str(vgmstream),
-                                  bridge=mod / "companion" / "bridge.py")
-        self.assertIn(f"Game:         {game}", output)
-        self.assertTrue((mod / "companion.ini").is_file())  # its settings live in the mod's folder
-        status, body = self.get(port, "/sounds/sounds.json")
-        self.assertEqual((status, json.loads(body)["sounds"]), (200, ["CRTV_NoSignal_Loop"]))
+        self.start("--port", str(free_port()), bridge=mod / "companion" / "bridge.py")
+        self.assertTrue((mod / "companion.ini").is_file())
+
+    def test_the_startup_says_only_what_a_player_needs(self):
+        output, _ = self.start("--settings", str(self.root / "companion.ini"), "--port", str(free_port()))
+        self.assertTrue(output.startswith("Townfall Companion "), output)
+        for noise in ("Settings:", "Game:", "Game sounds:", "Game sounds ready", "CRTV stream:",
+                      "UE4SS console: disabled", "On this PC", "On the phone: http"):
+            self.assertNotIn(noise, output)
 
 
 class ConfigTest(unittest.TestCase):
@@ -508,19 +414,24 @@ class ConfigTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.saved = self.config.MOD_DIR, self.config.TOOLS_DIR
-        self.config.MOD_DIR, self.config.TOOLS_DIR = self.root, self.root / "tools"
+        self.saved = self.config.MOD_DIR
+        self.config.MOD_DIR = self.root
 
     def tearDown(self):
-        self.config.MOD_DIR, self.config.TOOLS_DIR = self.saved
+        self.config.MOD_DIR = self.saved
         self.tmp.cleanup()
 
-    def test_a_downloaded_tool_is_found_anywhere_in_the_tools_folder(self):
-        self.assertIsNone(self.config.find_tool("no-such-tool.exe"))
-        unpacked = self.root / "tools" / "no-such-tool-8.0-essentials_build" / "bin" / "no-such-tool.exe"  # as zips unpack
-        unpacked.parent.mkdir(parents=True)
-        unpacked.write_bytes(b"")
-        self.assertEqual(self.config.find_tool("no-such-tool.exe"), unpacked)
+    def test_the_window_is_there_unless_the_settings_turn_it_off(self):
+        settings = self.root / "companion.ini"
+        self.assertTrue(self.config.window_wanted(settings), "no settings file yet: the first start")
+        self.assertFalse(settings.exists(), "and none made by asking")
+        for text, wanted in (("[bridge]\nport = 8790\n", True), ("[bridge]\nwindow = on\n", True),
+                             ("[bridge]\nwindow = off\n", False), ("[bridge]\nwindow = maybe\n", False),
+                             ("not a settings file", False)):
+            with self.subTest(text=text):
+                settings.write_text(text, encoding="utf-8")
+                self.assertIs(self.config.window_wanted(settings), wanted)
+        self.assertIn("\nwindow = on\n", self.config.DEFAULT_SETTINGS)
 
     def test_the_pin_is_digits_or_empty_and_existing_settings_have_none(self):
         settings = self.root / "companion.ini"
@@ -534,14 +445,13 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.config.load(settings)
 
-    def test_paths_in_the_settings(self):
+    def test_a_settings_file_from_an_earlier_version_still_loads(self):
         settings = self.root / "companion.ini"
-        settings.write_text('[paths]\ngame = "D:\\Games\\Townfall"\nvgmstream = tools\\vgm\\vgmstream-cli.exe\n',
-                            encoding="utf-8")
+        settings.write_text('[bridge]\npin = 2468\n[paths]\ngame = "D:\\Games\\Townfall"\nvgmstream =\n',
+                            encoding="utf-8")  # 1.x had the game's and vgmstream's folders
         loaded = self.config.load(settings)
-        self.assertEqual(loaded.game, Path("D:/Games/Townfall"))  # quotes are fine
-        self.assertEqual(loaded.vgmstream, self.root / "tools" / "vgm" / "vgmstream-cli.exe")  # from the mod folder
-        self.assertEqual((loaded.port, loaded.listen), (8790, "0.0.0.0"))  # the rest stays default
+        self.assertEqual((loaded.pin, loaded.port, loaded.listen), ("2468", 8790, "0.0.0.0"))
+        self.assertNotIn("[paths]", self.config.DEFAULT_SETTINGS)
 
     def test_a_note_after_a_value(self):
         settings = self.root / "companion.ini"
@@ -612,7 +522,7 @@ class PinTest(BridgeTest):
         status, _, body = self.get("/")
         self.assertEqual(status, 200)
         self.assertIn(b'placeholder="PIN"', body)  # the PIN page, not the app
-        for path in ("/api/state", "/events", "/app.js", "/sounds/sounds.json", "/clips/Bink/Enraged_Focused.mp4"):
+        for path in ("/api/state", "/events", "/app.js", "/api/audio/stream", "/api/crtv/frame"):
             self.assertEqual(self.get(path)[0], 401, path)
         self.assertEqual(self.post("/api/control", {"type": "crtv", "frequency": 0.4}), 401)
         self.assertFalse((self.telemetry.parent / "townfall-companion-commands.json").exists())
@@ -626,6 +536,16 @@ class PinTest(BridgeTest):
         self.assertEqual(self.get("/api/state", mine)[0], 200)
         self.assertNotIn(b'placeholder="PIN"', self.get("/", mine)[2])
         self.assertEqual(self.get("/api/state", {"Cookie": "tfc_pin=forged"})[0], 401)
+
+    def test_the_connection_check_needs_no_pin_and_shows_nothing_of_the_game(self):
+        status, headers, body = self.get("/check")
+        page = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertIn(f"Now open http://127.0.0.1:{self.port} and enter the PIN.", page)
+        self.assertIsNone(headers["Set-Cookie"])  # it doesn't let the phone in
+        for secret in ("123456", "gameLive", "enemies", "signals", "crtv"):
+            self.assertNotIn(secret, page)
+        self.assertEqual(self.get("/api/state")[0], 401)  # and the rest stays shut
 
 
 class PinLockoutTest(PinTest):
@@ -661,6 +581,46 @@ class HeartbeatTest(BridgeTest):
         self.assertIn("already running", result.stderr)
 
 
+class ReplaceOlderTest(unittest.TestCase):
+    def test_a_companion_from_before_an_update_is_replaced(self):
+        # The virus scanner can still hold the heartbeat the companion just wrote when the folder goes.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            root, old_port = Path(folder), free_port()
+            # An older companion: it listens, and its heartbeat doesn't give a version.
+            old = subprocess.Popen([sys.executable, "-c", "import socket, time; s = socket.socket(); "
+                                    f"s.bind(('127.0.0.1', {old_port})); s.listen(); time.sleep(60)"])
+            new = None
+            try:
+                for _ in range(50):
+                    try:
+                        socket.create_connection(("127.0.0.1", old_port), timeout=0.2).close()
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                (root / "townfall-companion-bridge.json").write_text(json.dumps(
+                    {"time": int(time.time()), "pid": old.pid, "port": old_port, "phones": 0}))
+                new = subprocess.Popen(
+                    [sys.executable, "-u", str(BRIDGE), "--host", "127.0.0.1", "--port", str(free_port()),
+                     "--telemetry-file", str(root / "telemetry.json"), "--settings", str(root / "companion.ini"),
+                     "--pin", ""],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                output = ""
+                for line in new.stdout:
+                    output += line
+                    if "Listening on" in line:
+                        break
+                self.assertIn("this one replaces it", output)
+                self.assertIsNotNone(old.wait(timeout=5), "the older one ended")
+                self.assertIsNone(new.poll(), "the new one runs")
+            finally:
+                for process in (old, new):
+                    if process:
+                        process.kill()
+                        process.wait(timeout=5)
+                        if process.stdout:
+                            process.stdout.close()
+
+
 class BannerTest(unittest.TestCase):
     def test_the_address_and_pin_are_framed_for_the_companions_window(self):
         sys.path.insert(0, str(COMPANION))
@@ -680,6 +640,69 @@ class BannerTest(unittest.TestCase):
         bridge.phone_info.clear()
 
 
+class GameProfileStartupTest(unittest.TestCase):
+    """At its start, after a game update, the companion reads the game's new version for tf_native.dll
+    (game_profile.py), in the background: said only when it fails, and then only where to read what to do; the rest
+    goes on whatever comes of it."""
+
+    def setUp(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+            import config
+            import game_profile
+        finally:
+            sys.path.remove(str(COMPANION))
+        self.bridge, self.config, self.game_profile = bridge, config, game_profile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.game = Path(tmp.name)
+        self.exe = self.game / game_profile.GAME_EXE
+        self.exe.parent.mkdir(parents=True)
+        self.exe.write_bytes(b"MZ")
+        saved = config.installed_game_dir, game_profile.needed, game_profile.write_apart
+        self.addCleanup(self.restore, saved)
+        self.written = []
+        config.installed_game_dir = lambda: self.game
+        game_profile.needed = lambda exe: True
+        game_profile.write_apart = self.write
+
+    def write(self, exe):
+        self.written.append(exe)
+
+    def restore(self, saved):
+        self.config.installed_game_dir, self.game_profile.needed, self.game_profile.write_apart = saved
+
+    def said(self):
+        import contextlib
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.bridge.prepare_game_profile()
+        return out.getvalue()
+
+    def test_a_new_version_of_the_game_is_read_without_a_word(self):
+        self.assertEqual((self.said(), self.written), ("", [self.exe]))
+
+    def test_nothing_is_read_or_said_when_it_was_read_already_or_the_mod_isnt_in_a_game(self):
+        self.game_profile.needed = lambda exe: False
+        self.assertEqual((self.said(), self.written), ("", []))
+        self.game_profile.needed = lambda exe: True
+        self.config.installed_game_dir = lambda: None
+        self.assertEqual((self.said(), self.written), ("", []))
+
+    def test_any_failure_says_the_same_and_where_to_read_how_to_fix_it(self):
+        def changed(exe):
+            raise ValueError("changed: FRHICommandListImmediate::EndDrawingViewport")
+
+        def unreadable(exe):
+            raise FileNotFoundError("Townfall-Win64-Shipping.pdb")
+        for failure in (changed, unreadable):
+            self.game_profile.write_apart = failure
+            self.assertEqual(self.said(), "The CRTV's picture can't be streamed to the phone. How to fix it: see "
+                             '"The CRTV\'s picture can\'t be streamed" in docs\\TROUBLESHOOTING.md '
+                             "(in the mod's download).\n")
+
+
 class CleanupTest(unittest.TestCase):
     def test_everything_left_in_the_temp_folder_is_removed(self):
         sys.path.insert(0, str(COMPANION))
@@ -692,7 +715,7 @@ class CleanupTest(unittest.TestCase):
             telemetry = folder / "townfall-companion-telemetry.json"
             names = ["townfall-companion-commands.json", "townfall-companion-steer.json",
                      "townfall-companion-confirm.json", "townfall-companion-audio.json",
-                     "townfall-companion-bridge.json", "townfall-companion-game.json", "townfall-companion-bridge.tmp"]
+                     "townfall-companion-bridge.json", "townfall-companion-game.json"]
             for path in [telemetry, *(folder / n for n in names)]:
                 path.write_text("{}")
             (folder / "somebody-elses.json").write_text("{}")
@@ -720,28 +743,60 @@ class GameExitTest(unittest.TestCase):
         return subprocess.Popen(
             [sys.executable, "-u", str(BRIDGE), "--host", "127.0.0.1", "--port", str(free_port()),
              "--telemetry-file", str(folder / "townfall-companion-telemetry.json"), "--settings", str(folder / "c.ini"),
-             "--sound-cache", str(folder / "sounds"), "--clips-dir", str(folder / "clips"), "--pin", "",
+             "--pin", "",
              "--game-gone-after", "3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def test_the_companion_closes_when_a_game_it_has_seen_is_gone(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             game = folder / "townfall-companion-game.json"
-            game.write_text(json.dumps({"time": int(time.time())}))  # the game runs
+            running = threading.Event()
+            running.set()
+
+            def say_it_runs():  # as the mod does, rewriting the file in place
+                while running.is_set():
+                    game.write_text(json.dumps({"time": int(time.time())}))
+                    time.sleep(0.2)
+
+            writer = threading.Thread(target=say_it_runs, daemon=True)
+            writer.start()
             process = self.start(folder)
             try:
-                time.sleep(2.5)
+                time.sleep(4)
                 self.assertIsNone(process.poll())  # it keeps running while the game says so
+                running.clear()
+                writer.join()
                 game.write_text(json.dumps({"time": int(time.time()) - 100}))  # and stops saying so
                 self.assertEqual(process.wait(timeout=15), 0)  # a normal exit: the window closes
             finally:
+                running.clear()
                 if process.poll() is None:
                     process.kill()
                     process.wait()
             self.assertEqual([p.name for p in folder.glob("townfall-companion-*")], [])  # its files are gone too
 
-    def test_started_without_the_game_it_keeps_running(self):
+    def test_a_heartbeat_read_mid_write_is_not_the_game_leaving(self):
+        sys.path.insert(0, str(COMPANION))
+        try:
+            import bridge
+        finally:
+            sys.path.remove(str(COMPANION))
         with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            game = folder / bridge.GAME_FILE
+            game.write_text(json.dumps({"time": time.time()}))
+            closed = threading.Event()
+            server = types.SimpleNamespace(shutdown=closed.set)
+            threading.Thread(target=bridge.heartbeat_loop, args=(folder / "t.json", 0, server, 3), daemon=True).start()
+            time.sleep(1.5)
+            game.write_text("")  # read while the mod rewrites it
+            time.sleep(1.2)
+            self.assertFalse(closed.is_set())
+            self.assertTrue(closed.wait(timeout=5))  # no newer beat came: gone 3 s after the last one
+            bridge.close_heartbeats()  # as main() does as it ends
+
+    def test_started_without_the_game_it_keeps_running(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # see ReplaceOlderTest
             process = self.start(Path(tmp))
             try:
                 time.sleep(6)
@@ -751,13 +806,135 @@ class GameExitTest(unittest.TestCase):
                 process.wait()
 
 
+class WindowHookTest(unittest.TestCase):
+    """What the companion's window (gui.py) needs from the bridge: main() in a thread, a word about each visit to
+    /check, and stop()."""
+    HARNESS = "\n".join([
+        "import sys, threading",
+        "sys.path.insert(0, sys.argv.pop(1))",
+        "import bridge",
+        "visits = []",
+        "bridge.check_listeners.append(visits.append)",
+        "thread = threading.Thread(target=bridge.main)",
+        "thread.start()",
+        "sys.stdin.readline()",
+        "print('visits', visits, flush=True)",
+        "bridge.stop()",
+        "thread.join(10)",
+        "print('stopped', not thread.is_alive(), flush=True)",
+    ])
+
+    def test_main_runs_in_a_thread_hears_the_check_and_stops(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # see ReplaceOlderTest
+            folder = Path(tmp)
+            process = subprocess.Popen(
+                [sys.executable, "-u", "-c", self.HARNESS, str(COMPANION), "--host", "127.0.0.1",
+                 "--port", str(free_port()), "--telemetry-file", str(folder / "townfall-companion-telemetry.json"),
+                 "--settings", str(folder / "c.ini"), "--pin", "4321"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                output = ""
+                while "Listening on" not in output:
+                    line = process.stdout.readline()
+                    if not line:
+                        self.fail(f"the bridge didn't start: {output}")
+                    output += line
+                port = int(output.split("Listening on http://127.0.0.1:")[1].split()[0])
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/check", timeout=5) as r:
+                    self.assertEqual(r.status, 200)
+                output, _ = process.communicate("\n", timeout=30)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            self.assertIn("visits ['127.0.0.1']", output)  # the window tells this PC's own visits apart itself
+            self.assertIn("stopped True", output)
+            self.assertEqual(process.returncode, 0)
+
+
 class LauncherTest(unittest.TestCase):
-    """Start Companion.py, the double-click launcher: it runs bridge.py and keeps its window open on errors."""
+    """Start Companion.py, the double-click launcher. With tkinter it opens the companion's window (gui.py), from a
+    copy of itself without a console; without, as here, it runs bridge.py in the console and keeps that window open
+    on errors."""
     LAUNCHER = COMPANION.parent / "Start Companion.py"
+    # As a Python installed without tkinter (an option in its installer): importing it fails.
+    WITHOUT_TKINTER = ("import runpy, sys; sys.modules['tkinter'] = None; sys.argv.pop(0); "
+                       "runpy.run_path(sys.argv[0], run_name='__main__')")
+
+    def launcher(self, *args):
+        return [sys.executable, "-u", "-c", self.WITHOUT_TKINTER, str(self.LAUNCHER), *args]
 
     def run_launcher(self, *args):
-        return subprocess.run([sys.executable, str(self.LAUNCHER), *args], input="\n", capture_output=True,
-                              text=True, timeout=30)
+        return subprocess.run(self.launcher(*args), input="\n", capture_output=True, text=True, timeout=30)
+
+    def test_without_window_on_in_the_settings_it_stays_in_the_console(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # see ReplaceOlderTest
+            folder = Path(tmp)
+            (folder / "c.ini").write_text("[bridge]\nwindow = off\n", encoding="utf-8")
+            process = subprocess.Popen(  # with tkinter: only the setting keeps the window away
+                [sys.executable, "-u", str(self.LAUNCHER), "--host", "127.0.0.1", "--port", str(free_port()),
+                 "--pin", "", "--settings", str(folder / "c.ini"),
+                 "--telemetry-file", str(folder / "townfall-companion-telemetry.json")],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                output = ""
+                while "Listening on" not in output:
+                    line = process.stdout.readline()
+                    if not line:
+                        self.fail(f"the companion didn't start: {output}")
+                    output += line
+            finally:
+                process.kill()
+                process.wait()
+                process.stdout.close()
+
+    def test_without_tkinter_it_runs_in_the_console_as_before(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # see ReplaceOlderTest
+            folder = Path(tmp)
+            process = subprocess.Popen(
+                self.launcher("--host", "127.0.0.1", "--port", str(free_port()), "--pin", "2468",
+                              "--settings", str(folder / "c.ini"),
+                              "--telemetry-file", str(folder / "townfall-companion-telemetry.json")),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                output = ""
+                while "The phone asks for the PIN once" not in output:
+                    line = process.stdout.readline()
+                    if not line:
+                        self.fail(f"the companion didn't start: {output}")
+                    output += line
+                self.assertIn("PIN: 2468", output)
+                port = int(output.split("Listening on http://127.0.0.1:")[1].split()[0])
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/check", timeout=5) as r:
+                    self.assertEqual(r.status, 200)
+            finally:
+                process.kill()
+                process.wait()
+                process.stdout.close()
+
+    @unittest.skipUnless(sys.platform == "win32", "pythonw.exe is Windows'")
+    def test_for_the_window_it_hands_over_to_python_without_a_console(self):
+        launcher = runpy.run_path(str(self.LAUNCHER), run_name="launcher")  # its functions, without starting it
+        started, saved = [], sys.argv
+        sys.argv = [str(COMPANION / "bridge.py"), "--port", "18790"]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                pythonw = Path(tmp) / "pythonw.exe"
+                pythonw.write_bytes(b"")
+                handed_over = launcher["leave_console"](pythonw, lambda command, **options: started.append((command,
+                                                                                                           options)))
+        finally:
+            sys.argv = saved
+        self.assertTrue(handed_over)
+        (command, options), = started
+        self.assertEqual(command, [str(pythonw), str(self.LAUNCHER.resolve()), "--port", "18790"])  # its arguments too
+        self.assertEqual(options["env"][launcher["WINDOW_ONLY"]], "1")  # that copy doesn't hand over again
+        self.assertTrue(options["creationflags"] & subprocess.DETACHED_PROCESS)  # not tied to this console
+
+    def test_without_pythonw_it_stays_in_the_console(self):
+        launcher = runpy.run_path(str(self.LAUNCHER), run_name="launcher")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(launcher["leave_console"](Path(tmp) / "pythonw.exe", lambda *a, **k: self.fail("started")))
 
     def test_it_runs_the_bridge(self):
         result = self.run_launcher("--help")

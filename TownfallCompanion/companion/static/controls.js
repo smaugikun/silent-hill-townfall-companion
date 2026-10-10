@@ -1,9 +1,9 @@
 // The CRTV's physical controls. The AV OUT / VIEW selector slides along its slot under the finger
 // (or flips over on a tap) and clicks into either end. The TUNING buttons sink while held, tune one
-// step on a tap and repeat, speeding up, while held. The F key presses in the fine-tune mini-game.
+// step on a tap and repeat, speeding up, while held. The D-pad controls the fine-tune mini-game.
 import { $, clamp01, rad } from "./util.js";
 import { controlHaptic } from "./haptics.js";
-import { confirmFineTune, control, onControlChange, setSelector, tune } from "./scanner.js";
+import { confirmFineTune, pressFineTune, releaseFineTune, control, onControlChange, setSelector, tune } from "./scanner.js";
 
 const CANVAS_WIDTH = 1086; // PSD px, the unit of the positions below
 
@@ -105,24 +105,43 @@ function bindTuning(hit, part, direction) {
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) hit.addEventListener(type, release);
 }
 
-// The F key acts the moment it goes down: the mini-game is all about timing.
-function bindKey(hit, part, action) {
+// Fine-tune inputs act the moment they go down: the mini-game is all about timing. `look` is the class `part` shows
+// while the key is down. `onRelease`, if given, runs as the key comes back up, however that happens (the centre is
+// held to store a signal).
+function bindKey(hit, part, look, action, onRelease) {
   let id = null;
+  const up = () => {
+    if (id === null) return;
+    id = null;
+    part.classList.remove(look);
+    onRelease?.();
+  };
   hit.addEventListener("pointerdown", (ev) => {
     if (id !== null) return;
     ev.preventDefault();
     try { hit.setPointerCapture(ev.pointerId); } catch {}
     id = ev.pointerId;
-    part.classList.add("pressed");
+    part.classList.add(look);
     controlHaptic("press");
     action();
   });
-  const release = (ev) => {
-    if (ev.pointerId !== id) return;
-    id = null;
-    part.classList.remove("pressed");
-  };
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) hit.addEventListener(type, release);
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    hit.addEventListener(type, (ev) => { if (ev.pointerId === id) up(); });
+  }
+  window.addEventListener("blur", up);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) up(); });
+  hit.addEventListener("keydown", ev => {
+    if (!["Enter", " "].includes(ev.key) || ev.repeat || id !== null) return;
+    ev.preventDefault();
+    id = "keyboard";
+    part.classList.add(look);
+    controlHaptic("press");
+    action();
+  });
+  hit.addEventListener("keyup", ev => {
+    if (["Enter", " "].includes(ev.key)) { ev.preventDefault(); up(); }
+  });
+  hit.addEventListener("blur", up);
 }
 
 export function bindControls() {
@@ -131,5 +150,9 @@ export function bindControls() {
   bindSelector($("btnView"));
   bindTuning($("btnTuneDown"), $("partTuneDown"), -1);
   bindTuning($("btnTuneUp"), $("partTuneUp"), 1);
-  bindKey($("btnKeyF"), $("partKeyF"), confirmFineTune);
+  bindKey($("btnDpadCenter"), $("partDpadCenter"), "pressed", confirmFineTune, releaseFineTune);
+  for (const direction of ["up", "down", "left", "right"]) {
+    const name = direction[0].toUpperCase() + direction.slice(1);
+    bindKey($("btnDpad" + name), $("dpad"), "tilt-" + direction, () => pressFineTune(direction));
+  }
 }

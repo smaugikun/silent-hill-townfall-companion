@@ -4,18 +4,16 @@ The phone needs no app: it opens a page the companion serves on your PC.
 
 ## 1. Connect
 
-1. Double-click `Start Companion.py` on the PC. Its window shows the address for the phone, for example:
-
-   ```text
-   On the phone: http://192.168.1.50:8790
-   ```
-
+1. Double-click `Start Companion.py` on the PC. Its window shows the address for the phone, for example
+   `http://192.168.1.50:8790`, with a QR code, and the PIN.
 2. Put the phone on the **same Wi-Fi (or LAN)** as the PC. A guest network or a network that isolates its
    devices from each other won't work.
-3. Open that address in the phone's browser: **Chrome** on Android, **Safari** on an iPhone.
-4. Tap the screen once. Browsers only play sound, go full screen and vibrate after a tap.
+3. Open that address in the phone's browser, or scan the QR code: **Chrome** on Android, **Safari** on an iPhone.
+4. Enter the PIN (the phone remembers it), and bookmark the page.
+5. Tap the screen once. Browsers only play sound, go full screen and vibrate after a tap.
 
-`127.0.0.1` or `localhost` on a phone is the phone itself, so always use the address the window shows.
+`127.0.0.1` or `localhost` on a phone is the phone itself, so always use the address the window shows. If the page
+doesn't open: [Troubleshooting](TROUBLESHOOTING.md#the-page-doesnt-open-or-keeps-saying-connection-lost).
 
 The address stays the same as long as the PC keeps its network address and the port stays free. If another
 program has taken port 8790, the companion uses the next free port and says so; set a fixed `port` in
@@ -23,16 +21,18 @@ program has taken port 8790, the companion uses the next free port and says so; 
 
 ### The Windows firewall
 
-The first time the companion starts, Windows asks whether Python may communicate on networks. Allow it on
-**private networks**. If you dismissed the prompt or chose otherwise:
+The first time the companion starts, Windows asks whether Python may communicate on networks: allow it. Windows
+then lets Python in on the kind of network ticked there, usually **Private** only, so the phone gets through when
+Windows treats your home network as Private too. The companion's window checks this and says what to change
+([Troubleshooting](TROUBLESHOOTING.md#the-page-doesnt-open-or-keeps-saying-connection-lost)); by hand:
 
 - Windows Security → *Firewall & network protection* → *Allow an app through firewall* → find **Python** and
-  tick **Private**.
-- Your Wi-Fi must be a **private** network in Windows: Settings → *Network & internet* → *Wi-Fi* → your
-  network → *Network profile type: Private*. On a public profile Windows blocks the phone.
+  tick **Private** (and **Public** if your network is Public in Windows).
+- Or make your home network Private: Settings → *Network & internet* → *Wi-Fi* (or *Ethernet*) → your network →
+  *Network profile type: Private*.
 
-What stays on the PC: the game and the companion talk through files in your Windows temp folder, never over
-the network. Only the phone's page goes over the network, on the companion's port.
+What stays on the PC: the game and the companion talk through files and shared memory on the PC, never over the
+network. Only the phone's page goes over the network, on the companion's port.
 
 ## 2. The Chrome flag (Android, recommended)
 
@@ -50,10 +50,11 @@ The flag applies only to the address you enter, and only in Chrome on that phone
 
 | | Without the flag | With the flag |
 |---|---|---|
-| Screen, picture, sound, voices, videos | ✓ | ✓ |
-| TUNING buttons, F key, AV OUT / VIEW switch, settings | ✓ | ✓ |
+| The CRTV's picture and sound | ✓ | ✓ |
+| TUNING buttons, D-pad, AV OUT / VIEW switch, settings | ✓ | ✓ |
 | Vibration | ✓ | ✓ |
-| Turning the phone to aim the scanner / turn the player | ✗ | ✓ |
+| Turning the phone to look around with the CRTV, or to steer your character | ✗ | ✓ |
+| Leaning and tilting the phone during fine tuning | ✗ | ✓ |
 | Auto pickup, and the phone noticing it is put down | ✗ | ✓ |
 | Keeping the screen on | ✗ (set a longer screen timeout instead) | ✓ |
 
@@ -63,4 +64,5 @@ The settings (⚙) show under *Status* whether the rotation sensor and "Screen s
 
 Safari has no such flag, so on an iPhone the motion sensors and keeping the screen on don't work over the
 companion's `http://` address; iPhones also can't vibrate from a web page. The screen, sound, voices,
-videos, buttons and settings work. Set *Auto-Lock* to a longer time while you play.
+videos, buttons and settings work. During fine tuning, move the picture with the mouse or the controller
+instead. Set *Auto-Lock* to a longer time while you play.

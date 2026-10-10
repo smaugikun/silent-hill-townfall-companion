@@ -3,38 +3,32 @@
 // The phone's dial and the in-game CRTV's are one: tuned on the phone, the game's CRTV is tuned too, up
 // or down, so it comes up where the phone left it; tuned in the game while it is up, the phone's needle
 // follows. The AV OUT / VIEW selector decides the rest. VIEW: the CRTV is on the phone. While the in-game
-// CRTV is up the phone shows it, the fine-tune mini-game too, and F presses the fine-tune key; while it is
-// down the phone scans by itself from the telemetry, on the same dial. In VIEW the phone switches the game's
-// CRTV on and keeps it on (put away with the controller, it comes on again; not over a cutscene or the pause
-// menu), also while the phone is put down. With "In VIEW, show the game's CRTV on the monitor" (raises) the
-// character raises it with his animation, as L1 does (the mod calls the same request); without, it is
-// switched on silently and nothing shows on the monitor. The two are different states in the game (what he
-// holds up, and whether the radio is on), so the phone lowers a CRTV the way it raised it, and switching the
-// setting while it is up puts it away and raises it again the other way. "Turning the phone turns the
-// character" (steering) is apart from that: in VIEW, with the phone in hand (pickup.js), turning it turns
-// the player (app.js).
-// AV OUT: the PC has the CRTV, raised and lowered with the controller; the phone shows its picture or
-// stays dark (avOut). Going to AV OUT lowers the in-game CRTV if the phone raised it.
-import { clamp01, loadFlag, loadSetting, postControl, saveSetting } from "./util.js";
+// CRTV is up the phone shows its screen (the stream), mini-games included, and the D-pad presses the game's
+// fine-tune keys. In VIEW the phone switches the game's CRTV on and keeps it on (put away with the radio button or by
+// the game, it comes on again; not over a cutscene or the pause menu), also while the phone is put down. With "In
+// VIEW, show the game's CRTV on the monitor" (raises) the character raises it with his animation, as the radio button
+// does; without, it is switched on silently and nothing of it shows on the monitor, in the mini-game neither.
+// "Turning the phone turns the character" (steering) is apart from that: in VIEW, with the phone in hand (pickup.js),
+// turning and tilting it turns the player and looks up and down (app.js).
+// AV OUT: the PC has the CRTV, raised and lowered with the radio button, picture and sound; the phone's screen stays
+// dark.
+// The phone says its mode to the game (sayMode) and the mod does the rest, as it alone knows what the phone switched
+// on: it puts that away once the phone is out of VIEW, or once the monitor is to show it the other way (the phone
+// then switches it on again, the new way), and never a CRTV the player raised.
+import { clamp01, loadFlag, postControl, saveSetting } from "./util.js";
 
 const SEND_MS = 100;         // tuning goes to the bridge at most this often
 // After tuning, the phone's dial wins over the game's until the game reports it: the telemetry comes
 // a few hundred ms behind. A game that hasn't taken it after HOLD_MS has refused it: the dial follows the game.
 const HOLD_MS = 2000;
 const SAME_DIAL = 0.002;     // the telemetry has the dial to 3 decimals
-const RAISE_GRACE_MS = 2000; // how long the game gets to show a CRTV the phone raised
-// Raising: the CRTV put away in the game (letting go of the controller's trigger, which also cuts a
-// waypoint off mid-line) goes up again after REHOLD_MS; REHOLD_TRIES times in a row at most, in case the
-// game keeps putting it away (an interaction, something scripted). Counted afresh once it has stayed up
-// STEADY_MS.
+const RAISE_GRACE_MS = 2000; // how long the game gets to show a CRTV the phone switched on
+// The CRTV put away in the game (letting go of the radio button, which also cuts a waypoint off mid-line) goes up
+// again after REHOLD_MS; REHOLD_TRIES times in a row at most, in case the game keeps putting it away (an
+// interaction, something scripted). Counted afresh once it has stayed up STEADY_MS.
 const REHOLD_MS = 600;
 const REHOLD_TRIES = 3;
 const STEADY_MS = 3000;
-// Lowering: a request the game doesn't carry out (the character is mid-animation, or busy) is asked for again
-// after LOWER_CHECK_MS, LOWER_TRIES asks in all, as long as the CRTV stays up without a break: one that came
-// down and went up again was raised by the player, and is theirs.
-const LOWER_CHECK_MS = 1800;
-const LOWER_TRIES = 3;
 const DEFAULT_TOLERANCE = 0.02; // until the game's per-enemy values arrive
 // A notch of the dial: felt while tuning (controls.js), clicked as the needle passes (sound.js).
 export const NOTCH = 0.02;
@@ -45,17 +39,15 @@ export const control = {
   selector: "AV_OUT",  // "AV_OUT" | "VIEW"
   steering: loadFlag("tfc.sync", false), // "The phone steers your character"
   raises: loadFlag("tfc.raise", false),  // "In VIEW, show the game's CRTV on the monitor" (its raise animation)
-  avOut: loadSetting("tfc.avOut", "picture") === "off" ? "off" : "picture", // in AV OUT: dark, or the picture
+  miniGameShown: loadFlag("tfc.miniGameShown", false), // "In VIEW, show the game's CRTV during fine tuning"
   dial: 0,             // 0..1, the phone's and the game's; the game reports 0 while lowered, the needle stays put
   tunedAt: -Infinity,  // performance.now() of the last tuning step
-  raisedAt: null,      // when the phone raised the game's CRTV, which it then has to lower again
-  raisedAnimated: false, // whether it raised it with the character's animation (shown on the monitor), or silently
   putDown: false,      // the phone lies on a table or stands on a stand: it doesn't turn the player
 };
 
 let gameCrtv = {};
 let inCutscene = false;
-let lowering = null; // {since, animated, tries}: the phone asked the game to lower its CRTV, which is still up
+let raisedAt = -Infinity;   // when the phone last asked the game to switch its CRTV on
 let tunedWhileDown = false; // the phone tuned the game's CRTV while it was down
 let upSince = null, downSince = null, reholds = 0; // the in-game CRTV's state and how long it has been in it
 const listeners = [];
@@ -65,18 +57,19 @@ const changed = () => { for (const fn of listeners) fn(control); };
 
 const inView = () => control.selector === "VIEW";
 
-// The phone switches the in-game CRTV on and keeps it on in VIEW: its voices, sound and mini-game work. Whether
-// the character shows it on the monitor, with the raise animation, is the setting "In VIEW, show the game's CRTV".
-const holdsCrtv = () => inView();
+// The phone switches the in-game CRTV on and keeps it on in VIEW, while the page is in sight (a hidden page, the
+// screen off or another app, shows nothing): its voices, sound and mini-game work. Whether the character shows it
+// on the monitor, with the raise animation, is the setting "In VIEW, show the game's CRTV".
+const holdsCrtv = () => inView() && globalThis.document?.hidden !== true;
 
 // The phone steers the player: VIEW, with "The phone steers your character", the phone in hand.
 export const steers = () => inView() && control.steering && !control.putDown;
 
-// Whether the phone shows anything: always in VIEW, in AV OUT unless set to stay dark.
-export const phoneShows = () => inView() || control.avOut !== "off";
+// Whether the phone shows anything: only in VIEW (in AV OUT the PC has the picture).
+export const phoneShows = () => inView();
 
 // Every telemetry update, from app.js; `paused`: the game is (its world clock stands still), and the
-// CRTV isn't raised again meanwhile.
+// CRTV isn't switched on again meanwhile.
 export function onTelemetry(state, paused = false) {
   const wasUp = Boolean(gameCrtv.active);
   gameCrtv = state.crtv || {};
@@ -88,7 +81,7 @@ export function onTelemetry(state, paused = false) {
     if (!wasUp && tunedWhileDown) {
       tunedWhileDown = false;
       control.tunedAt = now;
-      sendCrtv(null, true);
+      sendCrtv(false, true);
     }
     const frequency = clamp01(gameCrtv.frequency);
     const waiting = now - control.tunedAt < HOLD_MS && Math.abs(frequency - control.dial) > SAME_DIAL;
@@ -101,27 +94,10 @@ export function onTelemetry(state, paused = false) {
   } else {
     upSince = null;
     downSince ??= now;
-    const raising = control.raisedAt != null && now - control.raisedAt <= RAISE_GRACE_MS;
+    const raising = now - raisedAt <= RAISE_GRACE_MS;
     if (holdsCrtv() && !paused && !raising && !inCutscene && now - downSince > REHOLD_MS && reholds < REHOLD_TRIES) {
       reholds++;
       raise();
-    }
-  }
-  // Lowered in the game (by the player, or with the level) after the phone raised it: nothing to release.
-  if (!gameCrtv.active && control.raisedAt != null && now - control.raisedAt > RAISE_GRACE_MS) {
-    control.raisedAt = null;
-  }
-  if (lowering) {
-    if (!gameCrtv.active) {
-      lowering = null;
-    } else if (!paused && now - lowering.since > LOWER_CHECK_MS) { // a paused game can't carry it out: asked once it runs
-      if (lowering.tries >= LOWER_TRIES) {
-        lowering = null;
-      } else {
-        lowering.tries++;
-        lowering.since = now;
-        sendCrtv(false, true, lowering.animated);
-      }
     }
   }
 }
@@ -159,15 +135,15 @@ export function scannerView(state, live) {
 
 let lastSent = 0;
 let pendingSend = null;
-// Throttled, but the last position always goes out, so the game ends where the needle stopped. active:
-// raise (true) or lower (false) the in-game CRTV, `animate` with the character's animation (the monitor
-// shows it) or silently; null leaves it as it is and only moves its dial.
-function sendCrtv(active, immediately, animate = control.raises) {
+// Throttled, but the last position always goes out, so the game ends where the needle stopped. `switchOn`: the
+// in-game CRTV is switched on too, with the character's animation (the monitor shows it) or silently, as the
+// setting says; otherwise only its dial moves.
+function sendCrtv(switchOn, immediately) {
   clearTimeout(pendingSend);
   const send = () => {
     lastSent = performance.now();
-    postControl(active == null ? {type: "crtv", frequency: control.dial}
-      : {type: "crtv", active, animate, frequency: control.dial});
+    postControl(switchOn ? {type: "crtv", active: true, animate: control.raises, frequency: control.dial}
+      : {type: "crtv", frequency: control.dial});
   };
   const wait = SEND_MS - (performance.now() - lastSent);
   if (immediately || wait <= 0) send();
@@ -175,54 +151,39 @@ function sendCrtv(active, immediately, animate = control.raises) {
 }
 
 function raise() {
-  control.raisedAt = performance.now();
-  control.raisedAnimated = control.raises;
+  raisedAt = performance.now();
   sendCrtv(true, true);
 }
 
-// Puts the CRTV the phone raised away the way it raised it. The character's own state (what the monitor shows)
-// is apart from the radio's: a silent switch-off of one he holds up leaves it on the monitor with the game
-// believing it is down; and a CRTV that is up silently can't be given his animation by raising it again (the
-// mod sees the radio up already), only by putting it away and raising it the other way.
-// onTelemetry asks again if the game keeps it up.
-function lower() {
-  const animated = control.raisedAnimated;
-  control.raisedAt = null;
-  reholds = 0;
-  downSince = null; // the rehold's wait starts when the game reports it down
-  lowering = {since: performance.now(), animated, tries: 1};
-  sendCrtv(false, true, animated);
+// The phone's mode, for the game: whether the CRTV is the phone's (VIEW with the page in sight), and whether in VIEW
+// the monitor shows it, and in the mini-game. Said before any raise, at once when it changes, and again every couple
+// of seconds (app.js): the mod takes a phone that stops saying it for gone, and the game is as it was without the
+// phone. `leaving`: the page goes away, and hands the game back.
+export function sayMode(leaving = false) {
+  postControl({type: "mode", selector: holdsCrtv() && !leaving ? "VIEW" : "AV_OUT", onMonitor: control.raises,
+               miniGameShown: control.miniGameShown});
 }
 
-// Raising (VIEW): raise it unless it is up already. Not over a cutscene; the rehold raises it once that is
-// over. Back in VIEW before the game put away the CRTV the phone had asked it to, that one is the phone's again.
+// Switching on (VIEW, in sight): unless it is up already. Not over a cutscene; the rehold switches it on once that
+// is over.
 function hold() {
-  if (!holdsCrtv()) return;
-  const pending = lowering;
-  lowering = null;
-  if (!gameCrtv.active) {
-    reholds = 0;
-    if (!inCutscene) raise();
-  } else if (pending) {
-    control.raisedAt = performance.now();
-    control.raisedAnimated = pending.animated;
-    if (pending.animated !== control.raises) lower();
-  }
-}
-
-// Hands the game back: lowers the CRTV if the phone raised it. Also when the page goes away.
-export function letGo() {
-  clearTimeout(pendingSend);
-  if (control.raisedAt == null) return;
-  lower();
+  if (!holdsCrtv() || gameCrtv.active) return;
+  reholds = 0;
+  if (!inCutscene) raise();
 }
 
 export function setSelector(position) {
   if (position === control.selector) return;
-  if (position === "AV_OUT") letGo();
   control.selector = position;
+  sayMode();
   hold();
   changed();
+}
+
+// The page hidden or in sight again (app.js): hidden, the game hears AV OUT; in sight, the CRTV comes on again.
+export function onVisibilityChange() {
+  sayMode();
+  hold();
 }
 
 // Put down, on a table or a stand, or picked up again (pickup.js): only the turning depends on it.
@@ -232,20 +193,24 @@ export function setPutDown(down) {
   changed();
 }
 
-export function setAvOut(value) {
-  control.avOut = value;
-  saveSetting("tfc.avOut", value);
-  changed();
-}
-
+// The mod puts away a CRTV the phone switched on the other way, so the monitor starts or stops showing it now, not at
+// the next raise; the rehold switches it on again the new way once the game reports it down.
 export function setRaises(on) {
   if (on === control.raises) return;
   control.raises = on;
   saveSetting("tfc.raise", on);
-  // A CRTV the phone raised the other way is put away the way it was raised and raised again the new way
-  // (the hold, once the game reports it down), so the monitor starts or stops showing it now, not at the
-  // next raise.
-  if (inView() && control.raisedAt != null && control.raisedAnimated !== on) lower();
+  reholds = 0;
+  sayMode();
+  changed();
+}
+
+// Whether the monitor shows the CRTV and the hands holding it while the mini-game runs in VIEW: the mod shows or hides
+// them at once.
+export function setMiniGameShown(on) {
+  if (on === control.miniGameShown) return;
+  control.miniGameShown = on;
+  saveSetting("tfc.miniGameShown", on);
+  sayMode();
   changed();
 }
 
@@ -256,14 +221,37 @@ export function setSteering(on) {
   changed();
 }
 
-// The F key: the press in the in-game fine-tune mini-game, which runs only while the CRTV is up.
+// The D-pad's centre: the press in the in-game fine-tune mini-game; held, it stores a signal in the advanced
+// mini-game, so letting go is sent too. Every press goes to the game, which decides by its own CRTV (and logs it):
+// the phone's idea of it may be a moment behind, as right after the game put the CRTV away and up again.
+let centreSent = false;
+// While the centre is held (storing a signal) the phone's pose doesn't move the game's image (app.js).
+export const centreHeld = () => centreSent;
 export function confirmFineTune() {
-  if (gameCrtv.active) postControl({type: "confirm"});
+  centreSent = true;
+  postControl({type: "confirm"});
+}
+
+export function releaseFineTune() {
+  if (centreSent) postControl({type: "release"});
+  centreSent = false;
+}
+
+// The D-pad's arrows: the mini-game's arrow keys, sent as the centre is. Outside the mini-game, left and right are the
+// game's quick tune, which jumps its dial to the next frequency: the needle then follows the game's dial at once, not
+// the phone's own from a tuning a moment before (HOLD_MS), and that tuning doesn't go out after and pull it back.
+export function pressFineTune(direction) {
+  if (!["up", "down", "left", "right"].includes(direction)) return;
+  if (direction === "left" || direction === "right") {
+    clearTimeout(pendingSend);
+    control.tunedAt = -Infinity;
+  }
+  postControl({type: "fine_tune", direction});
 }
 
 // One tuning step from the phone's TUNING buttons, in either selector position: the game's dial moves
-// with the phone's, up or down. Raising (VIEW with the setting), a CRTV that is down comes up with it, not
-// over a cutscene. Returns whether the dial passed a notch.
+// with the phone's, up or down. In VIEW a CRTV that is down comes on with it, not over a cutscene. Returns whether
+// the dial passed a notch.
 export function tune(delta) {
   const dial = Math.round(clamp01(control.dial + delta) * 1e4) / 1e4; // no float drift from repeated steps
   if (dial === control.dial) return false; // at the end of the dial
@@ -272,11 +260,7 @@ export function tune(delta) {
   control.tunedAt = performance.now();
   const raiseIt = holdsCrtv() && !gameCrtv.active && !inCutscene;
   if (!gameCrtv.active && !raiseIt) tunedWhileDown = true;
-  if (raiseIt) {
-    control.raisedAnimated = control.raises;
-    control.raisedAt ??= control.tunedAt;
-    lowering = null;
-  }
-  sendCrtv(raiseIt ? true : null);
+  if (raiseIt && control.tunedAt - raisedAt > RAISE_GRACE_MS) raisedAt = control.tunedAt;
+  sendCrtv(raiseIt);
   return notch;
 }

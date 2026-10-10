@@ -3,12 +3,15 @@ import argparse
 import errno
 import hashlib
 import hmac
+import html
 import json
 import math
 import os
 import queue
 import re
+import signal
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -16,15 +19,16 @@ import time
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import config
-from convert_videos import GameVideos
-from game_sounds import GameSounds, wav_seconds
+import game_profile
+from crtv_native import NativeFrames
+from game_audio import GameAudio
 
 STATIC = Path(__file__).resolve().parent / "static"
 # Bump when the phone UI starts relying on something new in the bridge (static/app.js checks it).
-BRIDGE_VERSION = 11
+BRIDGE_VERSION = 31
 # Taken by another program, or kept by Windows for itself (Hyper-V and WSL reserve ranges of ports).
 PORT_UNAVAILABLE = {errno.EADDRINUSE, errno.EACCES, getattr(errno, "WSAEACCES", errno.EACCES)}
 PORT_TRIES = 20
@@ -37,13 +41,29 @@ TELEMETRY_STALE_AFTER = 2.0
 HEARTBEAT_FILE = "townfall-companion-bridge.json"
 GAME_FILE = "townfall-companion-game.json"
 HEARTBEAT_EVERY = 1.0
+STREAM_IDLE_S = 3.0  # the picture and sound streams end after this long with nothing new; the phone opens them again
+EVENT_PING_S = 5.0   # /events says it is alive this often when nothing else came (the phone reconnects after 12 s)
 HEARTBEAT_FRESH_S = 4.0
 GAME_GONE_AFTER = 60.0  # a game that hasn't said it runs for this long has closed (a level load can stall it a while)
 MAX_BODY = 4096  # the phone's commands are tiny; more is not from the phone
+DISCARD_LIMIT = 1 << 20  # a refused body up to this size is read and dropped; a bigger one closes the connection
 # Phone commands for the mod, next to the telemetry file: /api/control "type" -> file.
 COMMAND_FILES = {"crtv": "townfall-companion-commands.json", "steer": "townfall-companion-steer.json",
-                 "confirm": "townfall-companion-confirm.json", "audio": "townfall-companion-audio.json",
-                 "record": "townfall-companion-record.json"}
+                 "confirm": "townfall-companion-confirm.json", "release": "townfall-companion-release.json",
+                 "audio": "townfall-companion-audio.json", "fine_tune": "townfall-companion-fine-tune.json",
+                 "align": "townfall-companion-align.json", "mode": "townfall-companion-mode.json",
+                 "note": "townfall-companion-note.json", "look": "townfall-companion-look.json"}
+# Whether the phone's turns move the mini-game's image, or why not (static/app.js alignmentOff), for the game's log.
+ALIGN_STATES = {"on", "not in view", "player dead", "no game data", "crtv down", "centre held", "game paused",
+                "game samples stopped", "page hidden", "motion sensor off", "motion sensor quiet",
+                "motion sensor unchanged"}
+# A problem on the phone's page, for the game's log: printable characters, no quote or backslash (the mod reads it
+# with a plain pattern).
+NOTE_TEXT = re.compile(r'[ !#-\[\]-~]{1,200}')
+# The phone's buttons and its mode, shown in the companion's window as they come (the rest comes many times a second).
+SHOWN = {"confirm": "phone pressed the D-pad's centre", "release": "phone let go of the D-pad's centre",
+         "fine_tune": "phone pressed fine-tune {direction}", "mode": "phone switched to {selector}",
+         "note": "phone: {text}"}
 
 state_lock = threading.Lock()
 telemetry = {
@@ -53,8 +73,6 @@ telemetry = {
     "crtv": {"active": False, "frequency": 0.0, "signalType": "none"},
     "cutscene": None,
     "gameLive": False,
-    "demo": False,
-    "recording": False,
     # The phone UI checks this, so a bridge left running from before an update is noticed.
     "bridge": BRIDGE_VERSION,
 }
@@ -97,22 +115,59 @@ def read_heartbeat(path):
     return None
 
 
+def stop_older(beat):
+    """Ends the companion of an older version that wrote `beat`: one that stayed open from before an update (it
+    closes a minute after the game does) would go on serving the new page and mod its old commands. Its heartbeat
+    is a second old at most, so its pid is that companion's. True once its port is free."""
+    try:
+        os.kill(int(beat["pid"]), signal.SIGTERM)  # on Windows: the process ends at once
+        port = int(beat["port"])
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+            time.sleep(0.1)  # still answering
+        except OSError:
+            return True
+    return False
+
+
+# The heartbeat file stays open and is rewritten in place, padded to HEARTBEAT_BYTES, so the mod can keep it open
+# too (main.lua): opening a file in %TEMP% waits for the virus scanner, on the game's thread.
+HEARTBEAT_BYTES = 256
+heartbeat_files = {}  # path -> the open file
+
+
 def write_heartbeat(path, port):
     with clients_lock:
         phones = len(clients)
-    beat = {"time": int(time.time()), "pid": os.getpid(), "port": port, "phones": phones}
-    tmp = Path(path).with_suffix(".tmp")
+    # nativeFps / nativeWidth: how often and how wide the game sends the CRTV's screen; nothing without a phone.
+    # version: a companion started after an update replaces one still running from before it (stop_older).
+    beat = {"time": int(time.time()), "pid": os.getpid(), "port": port, "phones": phones, "version": BRIDGE_VERSION,
+            "nativeFps": Handler.stream_fps if phones else 0, "nativeWidth": Handler.stream_width}
     try:
-        tmp.write_text(json.dumps(beat), encoding="utf-8")
-        os.replace(tmp, path)  # whole or not at all: the mod reads it at any moment
+        out = heartbeat_files.get(path)
+        if out is None:
+            out = heartbeat_files[path] = open(path, "r+b" if Path(path).exists() else "w+b")
+        out.seek(0)
+        out.write(json.dumps(beat).encode("ascii").ljust(HEARTBEAT_BYTES))
+        out.flush()
     except OSError:
-        pass  # the mod or a virus scanner holds it for a moment; the next one comes in a second
+        heartbeat_files.pop(path, None)  # opened again in a second
+
+
+def close_heartbeats():
+    for out in heartbeat_files.values():
+        out.close()
+    heartbeat_files.clear()
 
 
 def ipc_files(telemetry_file):
     """Everything the companion and the mod leave in the temp folder."""
     folder = Path(telemetry_file).parent
-    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE, HEARTBEAT_FILE.replace(".json", ".tmp")]
+    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE]
     return [Path(telemetry_file), *(folder / name for name in names)]
 
 
@@ -125,23 +180,28 @@ def remove_ipc_files(telemetry_file):
 
 
 def read_game_beat(path, within):
-    """Whether the game's heartbeat is no older than `within` seconds."""
+    """When the game last said it runs (its heartbeat's time), if no longer ago than `within` seconds; else None,
+    also when the file can't be read."""
     try:
-        return time.time() - float(json.loads(Path(path).read_text(encoding="utf-8"))["time"]) <= within
+        beat = float(json.loads(Path(path).read_text(encoding="utf-8"))["time"])
     except (OSError, ValueError, KeyError, TypeError):
-        return False
+        return None
+    return beat if time.time() - beat <= within else None
 
 
 def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER):
     """Says every second that the companion is here and how many phones have the page open, and closes it
-    once a game it has seen running has stopped saying so. Started without the game, it just keeps running."""
+    once a game it has seen running has stopped saying so for `gone_after` seconds. Started without the game,
+    it just keeps running. A read that fails changes nothing: the mod rewrites the file every second, and a
+    read in that moment finds it empty."""
     folder = Path(telemetry_file).parent
-    seen = False
+    last_beat = None  # the newest heartbeat time read, once the game has been seen
     while True:
         write_heartbeat(folder / HEARTBEAT_FILE, port)
-        if read_game_beat(folder / GAME_FILE, gone_after):
-            seen = True
-        elif seen:
+        beat = read_game_beat(folder / GAME_FILE, gone_after)
+        if beat is not None:
+            last_beat = beat if last_beat is None else max(last_beat, beat)
+        elif last_beat is not None and time.time() - last_beat > gone_after:
             print("The game has closed: closing the companion.")
             server.shutdown()
             return
@@ -156,8 +216,6 @@ def merge_telemetry(payload):
         for key in ("enemies", "signals"):
             if isinstance(payload.get(key), list):
                 telemetry[key] = payload[key]
-        if isinstance(payload.get("recording"), bool):  # the mod is recording the CRTV's screen (tf_record.lua)
-            telemetry["recording"] = payload["recording"]
         if "cutscene" in payload:  # null when there is none: replaced, not merged
             telemetry["cutscene"] = payload["cutscene"]
         if isinstance(payload.get("t"), (int, float)):  # the game's clock at the sample, for timing on the phone
@@ -168,22 +226,14 @@ def merge_telemetry(payload):
     broadcast(out)
 
 
-# The demo game (demo_loop), for development: runs with --demo while the real game isn't sending; the real
-# game always wins.
-demo_on = threading.Event()
 game_file_live = False
 
 
-def demo_running():
-    return demo_on.is_set() and not game_file_live
-
-
 def update_live():
-    """Tell clients whether game data is flowing (the game's or the demo's), apart from whether they
-    reach the bridge; the phone shows and plays nothing without it."""
+    """Tell clients whether the game's data is flowing, apart from whether they reach the bridge; the phone
+    shows and plays nothing without it."""
     with state_lock:
-        telemetry["gameLive"] = game_file_live or demo_running()
-        telemetry["demo"] = demo_running()
+        telemetry["gameLive"] = game_file_live
         out = json.loads(json.dumps(telemetry))
     broadcast(out)
 
@@ -206,33 +256,71 @@ def send_to_game(commands_dir, payload):
     """Hand a phone command to the UE4SS mod, which polls these files (tf_commands.lua)."""
     global last_command_seq
     if payload["type"] == "crtv":
-        # active raises or lowers the in-game CRTV (VIEW); without it only the dial moves, while it is up (AV OUT)
+        # active switches the in-game CRTV on (VIEW); without it only the dial moves, up or down. The mod puts away
+        # what the phone switched on by the phone's mode.
         command = {}
         if "active" in payload:
-            if not isinstance(payload["active"], bool):
-                raise ValueError("active must be true or false")
-            command["active"] = payload["active"]
+            if payload["active"] is not True:
+                raise ValueError("active can only be true")
+            command["active"] = True
             if "animate" in payload:
                 if not isinstance(payload["animate"], bool):
                     raise ValueError("animate must be true or false")
                 command["animate"] = payload["animate"]  # the character's raise animation, or silently
         command["frequency"] = min(1.0, max(0.0, finite(payload["frequency"])))
     elif payload["type"] == "steer":
-        command = {"yaw": finite(payload["yaw"]) % 360}  # the mod turns the player by yaw only (tf_commands.lua)
-    elif payload["type"] == "audio":
-        flags = {"dialogue": payload.get("dialogue", False), "video": payload.get("video", False)}
-        if not isinstance(payload["muteGame"], bool) or not all(isinstance(v, bool) for v in flags.values()):
-            raise ValueError("muteGame, dialogue and video must be true or false")
-        # dialogue / video: the phone plays the talking (a waypoint's line, a cutscene's dialogue) / the CRTV
-        # screen's video with its sound, so the game's can go quiet too
-        command = {"muteGame": payload["muteGame"], **flags}
-    elif payload["type"] == "record":
-        # on: the mod records what the CRTV's screen does into a text file (tf_record.lua), for a bug report
-        if not isinstance(payload.get("on"), bool):
+        # The phone's heading, and how far up it is tilted (degrees): the mod turns the player and tilts the camera by
+        # how far they change (tf_commands.lua).
+        command = {"yaw": finite(payload["yaw"]) % 360}
+        if "pitch" in payload:
+            pitch = finite(payload["pitch"])
+            if abs(pitch) > 90:
+                raise ValueError("pitch must be within 90 degrees of level")
+            command["pitch"] = pitch
+    elif payload["type"] == "fine_tune":
+        direction = payload.get("direction")
+        if not isinstance(direction, str) or direction not in ("up", "down", "left", "right"):
+            raise ValueError("direction must be up, down, left, or right")
+        command = {"direction": direction}
+    elif payload["type"] == "mode":
+        # VIEW or AV OUT, and whether in VIEW the monitor shows the CRTV, and in the mini-game; the phone says it every
+        # couple of seconds.
+        if payload.get("selector") not in ("VIEW", "AV_OUT"):
+            raise ValueError("selector must be VIEW or AV_OUT")
+        if not isinstance(payload.get("onMonitor"), bool) or not isinstance(payload.get("miniGameShown"), bool):
+            raise ValueError("onMonitor and miniGameShown must be true or false")
+        command = {"selector": payload["selector"], "onMonitor": payload["onMonitor"],
+                   "miniGameShown": payload["miniGameShown"]}
+    elif payload["type"] == "align":
+        # The phone's lean and tilt from its neutral pose (degrees), how many degrees move the image half its range,
+        # and which neutral pose (session).
+        roll, pitch, dpu = finite(payload["roll"]), finite(payload["pitch"]), finite(payload["dpu"])
+        session = payload["session"]
+        if isinstance(session, bool) or not isinstance(session, int) or not 0 < session < 2 ** 31:
+            raise ValueError("session must be a whole number")
+        if abs(roll) > 180 or abs(pitch) > 90 or not 1 <= dpu <= 90:
+            raise ValueError("alignment pose out of range")
+        if not isinstance(payload["state"], str) or payload["state"] not in ALIGN_STATES:
+            raise ValueError("unknown alignment state")
+        command = {"roll": roll, "pitch": pitch, "dpu": dpu, "session": session, "state": payload["state"]}
+    elif payload["type"] == "look":
+        # Whether the phone looks around, how far from where the character faces and how far up (degrees).
+        yaw, pitch = finite(payload["yaw"]), finite(payload["pitch"])
+        if not isinstance(payload["on"], bool):
             raise ValueError("on must be true or false")
-        command = {"on": payload["on"]}
+        if abs(yaw) > 180 or abs(pitch) > 90:
+            raise ValueError("yaw must be within a half turn, pitch within a quarter")
+        command = {"on": payload["on"], "yaw": yaw, "pitch": pitch}
+    elif payload["type"] == "note":
+        if not isinstance(payload["text"], str) or not NOTE_TEXT.fullmatch(payload["text"]):
+            raise ValueError("a note is up to 200 plain characters")
+        command = {"text": payload["text"]}
+    elif payload["type"] == "audio":
+        if not isinstance(payload["muteGame"], bool):
+            raise ValueError("muteGame must be true or false")
+        command = {"muteGame": payload["muteGame"]}  # the game's CRTV sound quiet while the phone plays it
     else:
-        command = {}  # confirm: the press is the whole command
+        command = {}  # confirm, release: the press is the whole command
     with state_lock:
         # The mod acts on a changed seq; the clock keeps it changing across bridge restarts.
         last_command_seq = max(int(time.time() * 1000), last_command_seq + 1)
@@ -246,6 +334,8 @@ PIN_TRIES = 5        # wrong PINs from one address before it has to wait
 PIN_LOCK_S = 60
 pin_token = None     # set by main(): what the cookie of a phone that knows the PIN holds; None: no PIN
 phone_info = {}      # set by main(): {"urls": [...], "pin": "..."} for the banner in the companion's window
+check_listeners = []  # the companion's window (gui.py): each is called with the address that opened /check
+running = None       # set by main(): the server, for stop()
 pin_failures = {}    # address -> (wrong tries, locked until)
 pin_lock = threading.Lock()
 
@@ -263,6 +353,16 @@ f.onsubmit=async e=>{e.preventDefault();const r=await fetch("/login",{method:"PO
 body:JSON.stringify({pin:p.value})});if(r.ok)location.reload();else{m.textContent=r.status==429?"Too many tries, wait a minute":"Wrong PIN";p.value=""}};
 </script></body></html>"""
 
+# The connection check (/check) needs no PIN: it tells a phone that the network lets it through, and nothing more.
+CHECK_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Townfall Companion: connection check</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0a09;color:#d8cfb8;
+font:18px/1.5 monospace}main{width:min(26rem,90vw);text-align:center}h1{font-size:1.1rem;letter-spacing:.2em}
+a{display:block;margin-top:1.5rem;padding:1.1rem;color:inherit;border:1px solid #5a5240;border-radius:8px;
+text-decoration:none;letter-spacing:.2em}</style>
+</head><body><main><h1>TOWNFALL COMPANION</h1><p>Your phone reached Townfall Companion on {pc}.</p>
+<p>Now open {address}{pin}.</p><a href="/">OPEN</a></main></body></html>"""
+
 
 def pin_cookie_value(pin):
     return hashlib.sha256(f"townfall-companion:{pin}".encode("utf-8")).hexdigest()
@@ -270,17 +370,34 @@ def pin_cookie_value(pin):
 
 class Handler(SimpleHTTPRequestHandler):
     server_version = "TownfallCompanion/0.1"
-    commands_dir = sounds = videos = None  # set by main()
-    # Windows' registry can map .js to text/plain, which browsers refuse for module scripts; older
-    # Pythons don't know .webp.
-    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript", ".webp": "image/webp"}
+    # Connections stay open between requests: the phone sends its pose and presses many times a second, and over Wi-Fi a
+    # new connection for each can hang and keep one of the few the browser allows per address. Responses carry their
+    # length; the two that run on (the event feed, the picture stream) close their connection when they end. A
+    # connection that sends or takes nothing for `timeout` seconds is dropped, so a phone that went away frees it.
+    protocol_version = "HTTP/1.1"
+    timeout = 30
+    commands_dir = frames = audio = None  # set by main()
+    stream_fps, stream_width = 15, 640     # the CRTV stream's, set by main()
+    shown_mode = None  # the phone's mode as last shown: it says it every couple of seconds, shown when it changes
+    # Windows' registry can map .js to text/plain, which browsers refuse for module scripts.
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript"}
     _no_cache = False
+    _connection_said = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC), **kwargs)
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
+
+    def log_error(self, fmt, *args):
+        if not fmt.startswith("Request timed out"):  # a kept-open connection the phone stopped using: as it should be
+            super().log_error(fmt, *args)
+
+    def log_request(self, code="-", size="-"):
+        # The phone sends commands many times a second: only what failed is shown.
+        if isinstance(code, int) and code >= 400:
+            super().log_request(code, size)
 
     def _json(self, obj, status=200):
         raw = json.dumps(obj).encode("utf-8")
@@ -306,6 +423,7 @@ class Handler(SimpleHTTPRequestHandler):
             return True
         if method == "POST" and path == "/login":
             return True
+        self._discard_body()
         if method == "GET" and path in ("/", "/index.html"):
             raw = LOGIN_PAGE.encode("utf-8")
             self.send_response(HTTPStatus.OK)
@@ -343,11 +461,47 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _body_length(self):
+        """The request body's length, or None if it doesn't say a usable one."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            return None
+        return length if length >= 0 else None
+
+    def _discard_body(self):
+        """Reads a body nothing will use, so the connection can carry the next request (and the client isn't cut off
+        while still sending it); one too big for that, or of no telling length, closes the connection instead."""
+        length = self._body_length()
+        if length is not None and length <= DISCARD_LIMIT:
+            self.rfile.read(length)
+        else:
+            self.close_connection = True
+
+    def _check_page(self):
+        for listener in check_listeners:
+            listener(self.client_address[0])
+        # The address as the phone typed it, so the page can say where to go next.
+        address = "http://" + (self.headers.get("Host") or f"{lan_ip()}:{self.server.server_address[1]}")
+        raw = (CHECK_PAGE.replace("{pin}", " and enter the PIN" if pin_token else "")
+               .replace("{pc}", html.escape(socket.gethostname()))
+               .replace("{address}", html.escape(address))).encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
+
     def _read_json(self):
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
+        length = self._body_length()
+        if length is None:
+            self.close_connection = True  # no telling where the body ends
+            raise ValueError("bad Content-Length")
+        if length == 0:
             return {}
         if length > MAX_BODY:
+            self._discard_body()
             raise ValueError("body too large")
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         if not isinstance(payload, dict):
@@ -360,18 +514,44 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/check":
+            return self._check_page()
         if not self._gate(path, "GET"):
             return
         if path == "/api/state":  # what the phone gets, to look at in a browser when something seems off
             return self._json(snapshot())
+        if path == "/api/crtv/status":
+            return self._json(self.frames.status() if self.frames else {"status": "disabled"})
+        if path == "/api/crtv/stream":
+            return self._stream_frames()
+        if path == "/api/audio/stream":
+            return self._stream_audio()
+        if path == "/api/crtv/frame":  # one picture, to look at in a browser
+            frame = self.frames.latest() if self.frames else None
+            if frame is None:
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            meta, raw, (width, height) = frame
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", self.frames.content_type)
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-CRTV-Sequence", str(meta["seq"]))
+            self.send_header("X-CRTV-Size", f"{width}x{height}")
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         if path == "/events":
             q = queue.Queue(maxsize=4)
             with clients_lock:
                 clients.append(q)
+            self.close_connection = True
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.end_headers()
             try:
                 initial = json.dumps(snapshot(), separators=(",", ":"))
@@ -379,12 +559,12 @@ class Handler(SimpleHTTPRequestHandler):
                 self.wfile.flush()
                 while True:
                     try:
-                        data = q.get(timeout=15)
+                        data = q.get(timeout=EVENT_PING_S)
                         self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
                     except queue.Empty:
-                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.write(b"event: ping\ndata: {}\n\n")  # the phone hears the feed is alive
                     self.wfile.flush()
-            except ConnectionError:
+            except (ConnectionError, TimeoutError):
                 pass
             finally:
                 with clients_lock:
@@ -392,28 +572,59 @@ class Handler(SimpleHTTPRequestHandler):
                         clients.remove(q)
             return
 
-        if path.startswith("/clips/"):
-            relative = unquote(path[len("/clips/"):])
-            media = self.videos.mp4(relative)
-            if not media:
-                return self._json({"ok": False, "error": self.videos.problem or "no such video"}, 404)
-            return self._serve_media(self.videos.cache_dir, media.relative_to(self.videos.cache_dir).as_posix(),
-                                     {".mp4": "video/mp4"})
-        if path == "/sounds/sounds.json":
-            catalogue = self.sounds.catalogue()
-            if catalogue is None:
-                return self._json({"ok": False, "error": self.sounds.problem or "the game's sounds aren't listed yet"}, 404)
-            return self._json(catalogue)
-        sound = re.fullmatch(r"/sounds/(?:(dialogue|lines)/)?([^/]+)\.wav", path)
-        if sound:
-            wav = self.sounds.wav(sound[1] or "sounds", unquote(sound[2]))
-            if not wav:
-                return self._json({"ok": False, "error": "no such sound"}, 404)
-            return self._serve_media(self.sounds.cache_dir, wav.relative_to(self.sounds.cache_dir).as_posix(),
-                                     {".wav": "audio/wav"})
         if path == "/":
             self.path = "/index.html"
         return super().do_GET()
+
+    def _stream_frames(self):
+        """The CRTV's screen as it comes, each new picture the moment it is there, on one connection: a 4-byte
+        big-endian length, then the JPEG, again and again. Even pacing and no request per picture."""
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        sent, sent_at = None, time.time()
+        try:
+            while time.time() - sent_at < STREAM_IDLE_S:
+                frame = self.frames.latest() if self.frames else None
+                if frame and frame[0]["seq"] != sent:
+                    sent, sent_at = frame[0]["seq"], time.time()
+                    self.wfile.write(len(frame[1]).to_bytes(4, "big") + frame[1])
+                    self.wfile.flush()
+                else:
+                    time.sleep(0.005)
+        except (ConnectionError, TimeoutError):
+            pass  # the phone went away, or left the stream
+
+    def _stream_audio(self):
+        """The game's sound as it comes (static/audio-stream.js): "TFAU", the sample rate (uint32) and the channels
+        (uint16), little-endian, then 16-bit samples, interleaved. It ends when no sound has come for STREAM_IDLE_S
+        (the game closed or paused its mixer) or the format changes (a game started anew): the phone opens it again."""
+        said = self.audio.format() if self.audio else None
+        if not said:
+            return self._json({"ok": False, "error": "no sound from the game"}, 503)
+        self.close_connection = True
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        position, heard_at = None, time.time()
+        try:
+            self.wfile.write(b"TFAU" + struct.pack("<IH", *said))
+            self.wfile.flush()
+            while time.time() - heard_at < STREAM_IDLE_S and self.audio.format() == said:
+                data, position = self.audio.read(position)
+                if data:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                    heard_at = time.time()
+                else:
+                    time.sleep(0.01)
+        except (ConnectionError, TimeoutError):
+            pass  # the phone went away, or stopped playing
 
     def send_head(self):
         # The page's own files (GET and HEAD). Without Cache-Control the phone's Chrome keeps them for a
@@ -425,62 +636,21 @@ class Handler(SimpleHTTPRequestHandler):
         finally:
             self._no_cache = False
 
+    def send_response(self, code, message=None):
+        self._connection_said = False
+        super().send_response(code, message)
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == "connection":
+            self._connection_said = True
+        super().send_header(keyword, value)
+
     def end_headers(self):
         if self._no_cache:
             self.send_header("Cache-Control", "no-cache")
+        if self.close_connection and not self._connection_said:
+            self.send_header("Connection", "close")  # the client mustn't send another request on it
         super().end_headers()
-
-    def _serve_media(self, root, relative, types):
-        """A file of one of `types` (suffix -> Content-Type) under root, nowhere else. Phones stream
-        video with byte ranges, and iOS Safari won't play a clip without. no-cache with Last-Modified:
-        a phone asks each time and gets a 304 unless the file was converted again."""
-        root = root.resolve()
-        media = (root / relative).resolve()
-        if root not in media.parents or media.suffix not in types or not media.is_file():
-            return self._json({"ok": False, "error": "not found"}, 404)
-        modified = self.date_time_string(int(media.stat().st_mtime))
-        if self.headers.get("If-Modified-Since") == modified and "Range" not in self.headers:
-            self.send_response(HTTPStatus.NOT_MODIFIED)
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            return
-
-        size = media.stat().st_size
-        start, end = 0, size - 1
-        ranged = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip())
-        if ranged and (ranged[1] or ranged[2]):
-            if ranged[1]:
-                start = int(ranged[1])
-                end = min(int(ranged[2]), size - 1) if ranged[2] else size - 1
-            else:
-                start = max(0, size - int(ranged[2]))
-            if start > end:
-                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                self.send_header("Content-Range", f"bytes */{size}")
-                self.end_headers()
-                return
-            self.send_response(HTTPStatus.PARTIAL_CONTENT)
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        else:
-            self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", types[media.suffix])
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(end - start + 1))
-        self.send_header("Last-Modified", modified)
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        remaining = end - start + 1
-        with media.open("rb") as f:
-            f.seek(start)
-            try:
-                while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
-            except ConnectionError:
-                pass  # the player dropped this range to ask for another one
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -504,6 +674,14 @@ class Handler(SimpleHTTPRequestHandler):
                 send_to_game(self.commands_dir, payload)
             except (KeyError, TypeError, ValueError) as exc:
                 return self._json({"ok": False, "error": f"bad {kind} command: {exc}"}, 400)
+            if kind in SHOWN:
+                shown = SHOWN[kind].format(direction=payload.get("direction"), selector=payload.get("selector"),
+                                           text=payload.get("text"))
+                repeated = kind == "mode" and shown == Handler.shown_mode
+                if kind == "mode":
+                    Handler.shown_mode = shown
+                if not repeated:
+                    self.log_message("%s", shown)
             return self._json({"ok": True})
 
         return self._json({"ok": False, "error": "not found"}, 404)
@@ -533,139 +711,6 @@ def watch_telemetry_file(path):
             except ValueError:
                 pass  # read it mid-write; the next poll sees the whole file
         time.sleep(0.05)
-
-
-def read_command(path, last_seq):
-    """What tf_commands.lua does with a command file: (the command, its seq) if the seq is new."""
-    try:
-        command = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None, last_seq
-    seq = command.get("seq")
-    if seq is None or seq == last_seq:
-        return None, last_seq
-    return command, seq
-
-
-def demo_lines(sounds, count=4):
-    """[(name, seconds)] of a few of the game's spoken lines, for the demo waypoint to say; none
-    without the game's sounds."""
-    lines = []
-    for name in ((sounds.catalogue() if sounds else None) or {}).get("lines", [])[:count]:
-        wav = sounds.wav("lines", name)
-        if wav:
-            lines.append((name, wav_seconds(wav)))
-    return lines
-
-
-def demo_loop(commands_dir, sounds):
-    """A stand-in for Townfall and the mod, so the phone can be tried without the game.
-
-    Telemetry shaped like Townfall's: a player turning slowly, whose CRTV is up for 16 s (its dial
-    sweeping) and down for 8 s; four enemies circling, each on its own channel, with static that
-    fades out at 35 m; one active waypoint signal, which has to be fine-tuned: on its channel a box runs
-    to and fro along the fine-tune bar, and a press (F / A, "confirm") while it is over the diamond finds
-    it. Tuned to a monster or a waypoint, the CRTV's screen plays its video (behind the mini-game too). On the waypoint's
-    channel it talks, line after line of the game's (distorted until found). The phone's commands
-    are read from the files the mod reads: a CRTV the phone raised stays up, tuned where the phone left
-    it, until the phone lowers it; the player turns by as much as the phone turns, and stops turning
-    on its own for 3 s after. It only runs while switched on and the real game isn't sending."""
-    files = {kind: commands_dir / name for kind, name in COMMAND_FILES.items()}
-    lines = []  # filled in the background: the first listing of the game's sound banks takes a while
-    threading.Thread(target=lambda: lines.extend(demo_lines(sounds)), daemon=True).start()
-    speech = None  # (line index, when it started) while the waypoint talks
-    seqs = {kind: read_command(path, None)[1] for kind, path in files.items()}  # old files are a baseline
-    t0 = time.time()
-    phone_holds_until = steered_until = 0.0  # the simulated player keeps their hands off until then
-    phone_heading = None  # (heading, seq) of the phone's last steer command, as the mod keeps it
-    sound_asked = None    # when the phone last asked for the game's CRTV sound off (tf_audio.lua)
-    active, dial, yaw = True, 0.5, 0.0
-    channels = (0.23, 0.41, 0.62, 0.78)
-    creatures = ("Enraged", "Sorrowful", "TheFallen", "TheWall")
-    playing, playing_since = None, 0.0
-    found = False
-    zone, zone_width, box_period = 0.55, 0.1, 2.4  # the box crosses the bar in half a period
-    while True:
-        if not demo_running():
-            time.sleep(0.2)
-            continue
-        now = time.time()
-        t = now - t0
-        command, seqs["crtv"] = read_command(files["crtv"], seqs["crtv"])
-        if command:
-            if "active" in command:
-                active = command["active"]
-                phone_holds_until = math.inf if active else now + 8.0
-            if command.get("active", True):  # as the mod: the dial moves up or down, unless it is lowered
-                dial = command["frequency"]
-        command, seqs["steer"] = read_command(files["steer"], seqs["steer"])
-        if command:
-            if phone_heading and command["seq"] - phone_heading[1] <= 2000:
-                yaw = (yaw + (command["yaw"] - phone_heading[0] + 180.0) % 360.0 - 180.0) % 360.0
-            phone_heading, steered_until = (command["yaw"], command["seq"]), now + 3.0
-        if now > phone_holds_until:
-            active = t % 24.0 < 16.0
-            dial = 0.5 + 0.45 * math.sin(t * 0.15)
-        if now > steered_until:
-            yaw = (yaw + 0.7) % 360.0
-        on_waypoint = active and abs(dial - 0.15) < 0.02
-        box = 1.0 - abs(2.0 * (t % box_period) / box_period - 1.0)
-        command, seqs["audio"] = read_command(files["audio"], seqs["audio"])
-        if command:
-            sound_asked = now if command["muteGame"] else None
-        command, seqs["confirm"] = read_command(files["confirm"], seqs["confirm"])
-        if command and on_waypoint and not found:
-            found = abs(box - zone) <= zone_width / 2
-
-        enemies = []
-        for i, phase in enumerate((0.0, 1.7, 3.3, 4.8)):
-            r = 20.0 + 14.0 * math.sin(t * 0.25 + phase)
-            a = t * (0.08 + i * 0.012) + phase
-            x, y = math.cos(a) * r, math.sin(a) * r
-            reach = round(max(0.0, 1.0 - math.hypot(x, y) / 35.0), 2)
-            signal = reach if active else 0.0
-            enemies.append({
-                "id": f"mock-{i + 1}", "x": x, "y": y, "alive": True,
-                "signal": signal, "detected": signal > 0, "tuned": signal > 0 and abs(dial - channels[i]) < 0.02,
-                "rangeSignal": reach, "channel": channels[i], "tolerance": 0.02,
-                "video": f"Bink/{creatures[i]}_Focused",
-            })
-        said = None
-        if on_waypoint and lines:
-            index, started = speech or (0, now)
-            if now - started > lines[index][1] + 0.8:  # a breath, then the next line
-                index, started = (index + 1) % len(lines), now
-            speech = (index, started)
-            if now - started <= lines[index][1]:
-                said = {"line": lines[index][0], "id": "demo-waypoint", "ms": int((now - started) * 1000), "clear": found}
-        else:
-            speech = None
-        reach = round(max(0.0, 1.0 - math.hypot(18.0, 30.0) / 60.0), 2)
-        signals = [{
-            "id": "demo-waypoint", "kind": "waypoint", "x": 18.0, "y": 30.0,
-            "channel": 0.15, "tolerance": 0.02, "rangeSignal": reach, "signal": reach if active else 0.0,
-            "tuned": on_waypoint, "found": found, "video": "Bink/Video_CRTV_Room204Door_Signal", "dialogue": said,
-        }]
-        tuned = next((s for s in enemies + signals if s["tuned"]), None)
-        signal_type = ("none" if not tuned else "enemy" if tuned in enemies
-                       else "waypoint_tuned" if found else "waypoint")
-        video = tuned["video"] if tuned else None  # on the waypoint's channel too: the game plays one behind the mini-game
-        fine_tune = ({"box": round(box, 4), "zone": zone, "text": "FINE TUNE - SEARCHING"}
-                     if signal_type == "waypoint" else None)
-        if video != playing:
-            playing, playing_since = video, now
-        merge_telemetry({
-            "t": round(now, 3),
-            "player": {"x": 0.0, "y": 0.0, "yaw": round(yaw, 1)},
-            "enemies": enemies,
-            "signals": signals,
-            "audio": {"gameSoundOff": sound_asked is not None and now - sound_asked < 5.0},
-            "cutscene": None,  # the demo has none, and one the game left behind mustn't go on playing
-            "crtv": {"active": active, "frequency": round(dial, 3) if active else 0.0, "signalType": signal_type,
-                     "video": video, "videoTime": round(now - playing_since, 2) if video else None,
-                     "fineTune": fine_tune},
-        })
-        time.sleep(0.1)
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -698,10 +743,30 @@ def lan_ip():
 def page_version():
     """Changes whenever a file of the phone's page does. The page reloads itself when it sees another one:
     an open page reconnects to a restarted bridge by itself, and kept running its old code after an
-    update (2026-09-30: asking for sounds that no longer existed)."""
+    update."""
     files = sorted(p for p in STATIC.rglob("*") if p.is_file())
     listing = "\n".join(f"{p.relative_to(STATIC)}:{p.stat().st_size}:{p.stat().st_mtime_ns}" for p in files)
     return hashlib.sha1(listing.encode("utf-8")).hexdigest()[:12]
+
+
+# The docs come in the mod's download, beside the TownfallCompanion folder.
+PICTURE_PROBLEM = ("The CRTV's picture can't be streamed to the phone. How to fix it: see "
+                   '"The CRTV\'s picture can\'t be streamed" in docs\\TROUBLESHOOTING.md (in the mod\'s download).')
+
+
+def prepare_game_profile():
+    """After a game update, the game's own functions and structures are looked up again for tf_native.dll
+    (game_profile.py): a few seconds, once, in a process of its own at low priority, long done before anyone is in the
+    game. The DLL picks it up as soon as it is there, also while the game runs. Only for the game the mod is installed
+    in. Said only when it fails, and then only where to read what to do: `py game_profile.py` says why."""
+    game = config.installed_game_dir()
+    exe = game / game_profile.GAME_EXE if game else None
+    if not exe or not exe.is_file() or not game_profile.needed(exe):
+        return
+    try:
+        game_profile.write_apart(exe)
+    except Exception:  # a game that changed what the DLL relies on, its PDB gone, or the mod's folder not writable
+        print(PICTURE_PROBLEM)
 
 
 def connect_banner():
@@ -711,17 +776,6 @@ def connect_banner():
     width = max(len(line) for line in lines) + 4
     return "\n".join(["", "+" + "-" * width + "+", *("|  " + line.ljust(width - 2) + "|" for line in lines),
                       "+" + "-" * width + "+", ""])
-
-
-def report_sounds(sounds):
-    catalogue = sounds.catalogue(timeout=300)
-    if catalogue:
-        print(f"Game sounds ready: {len(catalogue['sounds'])} CRTV sounds, {len(catalogue['dialogue'])} cutscene "
-              f"dialogue tracks, {len(catalogue['lines'])} spoken lines (decoded as the phone asks, kept in {sounds.cache_dir})")
-    else:
-        print(f"Game sounds unavailable, the phone will be silent: {sounds.problem}")
-    if phone_info:
-        print(connect_banner(), end="")  # the last of the startup messages: say it again, so it isn't scrolled away
 
 
 def open_server(host, port):
@@ -735,6 +789,12 @@ def open_server(host, port):
     raise SystemExit(f"Ports {port} to {candidate} are all taken by other programs. Set another port in companion.ini.")
 
 
+def stop():
+    """Ends main() from another thread, as closing the companion's window does; main() cleans up as after Ctrl+C."""
+    if running:
+        running.shutdown()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Townfall Companion: serves the phone's page and passes what "
                                      "happens between the phone and the game. Settings: companion.ini.")
@@ -742,28 +802,28 @@ def main():
                         help="the settings file, written with the defaults if it isn't there (default: %(default)s)")
     parser.add_argument("--host", help="overrides listen in the settings")
     parser.add_argument("--port", type=int, help="overrides port in the settings")
-    parser.add_argument("--game-dir", type=Path, help="overrides game in the settings")
-    parser.add_argument("--vgmstream", type=Path, help="overrides vgmstream in the settings")
-    parser.add_argument("--radvideo", type=Path, help="overrides RAD Video Tools in the settings")
-    parser.add_argument("--ffmpeg", type=Path, help="overrides FFmpeg in the settings")
     parser.add_argument("--pin", help="overrides pin in the settings; empty turns the PIN off")
     parser.add_argument("--game-gone-after", type=float, default=GAME_GONE_AFTER, help=argparse.SUPPRESS)  # tests
-    parser.add_argument("--demo", action="store_true",
-                        help="for development: a simulated game while the real one isn't sending; the real game wins")
+    parser.add_argument("--stream-fps", type=int, choices=range(1, 31), default=30, metavar="1-30",
+                        help="the most pictures a second the CRTV stream sends (default: %(default)s)")
+    parser.add_argument("--stream-width", type=int, choices=(320, 480, 640), default=640,
+                        help="the CRTV stream's picture width in pixels (default: %(default)s)")
     parser.add_argument("--telemetry-file", type=Path, default=DEFAULT_TELEMETRY_FILE,
                         help="JSON file written by the UE4SS mod; phone commands go next to it")
-    parser.add_argument("--clips-dir", type=Path, default=config.CLIPS_DIR,
-                        help="the game's videos converted for the phone, served at /clips/")
-    parser.add_argument("--sound-cache", type=Path, default=config.SOUNDS_DIR,
-                        help="where the game's sounds are kept once decoded")
     args = parser.parse_args()
     try:
-        console_changed, console_problem = config.disable_ue4ss_console(), None
+        config.disable_ue4ss_console()
+        console_problem = None
     except OSError as exc:
-        console_changed, console_problem = None, f"couldn't change {config.UE4SS_SETTINGS_FILE}: {exc}"
+        console_problem = f"couldn't change {config.UE4SS_SETTINGS_FILE}: {exc}"
     settings = config.load(args.settings)
     already = read_heartbeat(args.telemetry_file.parent / HEARTBEAT_FILE)
-    if already:
+    version = already.get("version") if already else None
+    if already and not (isinstance(version, int) and version >= BRIDGE_VERSION):  # older ones don't say
+        print(f"An older Townfall Companion is still running (port {already.get('port')}): this one replaces it.")
+        if not stop_older(already):
+            raise SystemExit("The older Townfall Companion didn't stop: close its window, then start this again.")
+    elif already:
         raise SystemExit(f"Townfall Companion is already running (port {already.get('port')}): use that window, "
                          "or close it first.")
     global pin_token
@@ -772,55 +832,33 @@ def main():
         raise SystemExit("--pin must be 4 to 12 digits, or empty for none")
     pin_token = pin_cookie_value(pin) if pin else None
     host = args.host or settings.listen
-    game_dir = args.game_dir or settings.game or config.find_game_dir()
-    vgmstream = args.vgmstream or config.tool(settings, "vgmstream")
-    radvideo = args.radvideo or config.tool(settings, "radvideo")
-    ffmpeg = args.ffmpeg or config.tool(settings, "ffmpeg")
 
     Handler.commands_dir = args.telemetry_file.parent
-    Handler.videos = GameVideos(game_dir, radvideo, ffmpeg, vgmstream, args.clips_dir)
-    Handler.sounds = GameSounds(game_dir, vgmstream, args.sound_cache)
-    Handler.sounds.start()
+    Handler.frames = NativeFrames(Handler.commands_dir)
+    Handler.audio = GameAudio()
+    Handler.stream_fps, Handler.stream_width = args.stream_fps, args.stream_width
     telemetry["page"] = page_version()
     wanted = args.port or settings.port
     server, port = open_server(host, wanted)
+    global running
+    running = server
 
-    if args.demo:
-        demo_on.set()
-        update_live()
+    # Only what a player needs: the version, problems, and (below) the port and the phone's address and PIN.
     print(f"Townfall Companion {config.VERSION}")
-    if console_changed:
-        print("UE4SS console: disabled for the next Townfall launch (UE4SS.log still works)")
-    elif console_problem:
+    if console_problem:
         print(f"UE4SS console: {console_problem}. To hide it, set ConsoleEnabled, GuiConsoleEnabled and "
               "GuiConsoleVisible to 0 in that file yourself.")
-    print(f"Settings:     {settings.file}")
-    print(f"Game:         {game_dir or 'not found (set game in the settings)'}")
-    if game_dir:
-        print("Game sounds:  reading the game's sound banks (the first time takes about 10 s)")
-    if Handler.videos.index:
-        missing = Handler.videos.missing_tools()
-        if missing:
-            print("Game videos:  cached clips work; automatic conversion needs " + "; ".join(missing))
-        else:
-            print(f"Game videos:  {len(Handler.videos.index)} found; missing clips start pre-caching now")
-            Handler.videos.start_precache()
     threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.game_gone_after),
                      daemon=True).start()
     threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
-    threading.Thread(target=demo_loop, args=(Handler.commands_dir, Handler.sounds), daemon=True).start()
-    threading.Thread(target=report_sounds, args=(Handler.sounds,), daemon=True).start()
+    threading.Thread(target=prepare_game_profile, daemon=True).start()
 
     if port != wanted:
         print(f"Port {wanted} is taken by another program, so the companion uses port {port}. The phone's address "
               f"changes with it: if you entered the old one in Chrome's \"Insecure origins treated as secure\" flag, "
               f"enter this one there too.")
     if host == "0.0.0.0":
-        print(f"On this PC:   http://127.0.0.1:{port}")
-        ip = lan_ip()
-        if ip:
-            print(f"On the phone: http://{ip}:{port}  (same network; 127.0.0.1 on a phone is the phone itself)")
-        else:
+        if not lan_ip():
             print("On the phone: this PC has no network address; connect it to the network the phone is on")
     else:
         print(f"Listening on http://{host}:{port}")
@@ -832,7 +870,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        Handler.videos.close()
+        Handler.frames.close()
+        Handler.audio.close()
+        close_heartbeats()
         server.server_close()
         remove_ipc_files(args.telemetry_file)
 

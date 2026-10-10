@@ -6,8 +6,10 @@ No game needed. Requires lupa, which bundles Lua 5.4 (the version UE4SS embeds):
     python -m unittest discover -s tests -v
 """
 import json
+import struct
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
@@ -39,9 +41,16 @@ class ModTest(unittest.TestCase):
         self.addCleanup(self.world.closeFiles)  # the mod keeps command files open; runs before tmp.cleanup
         self.world.start()
 
-    def beat(self, phones=1, age=0):
+    def beat(self, phones=1, age=0, fps=0):
         """The companion's heartbeat file, as the companion writes it."""
-        self.bridge_beat.write_text(json.dumps({"time": int(time.time()) - age, "pid": 1, "port": 8790, "phones": phones}))
+        self.bridge_beat.write_text(json.dumps({"time": int(time.time()) - age, "pid": 1, "port": 8790, "phones": phones,
+                                                "nativeFps": fps if phones else 0, "nativeWidth": 640}))
+
+    def mode(self, selector, on_monitor=False, mini_game_shown=False):
+        """The phone's mode, as bridge.py writes it: the phone says it every couple of seconds."""
+        self.mode_seq = getattr(self, "mode_seq", int(time.time() * 1000)) + 1
+        (self.tmp / "townfall-companion-mode.json").write_text(json.dumps(
+            {"selector": selector, "onMonitor": on_monitor, "miniGameShown": mini_game_shown, "seq": self.mode_seq}))
 
     def logs(self):
         return list(self.world.logs.values())
@@ -73,7 +82,7 @@ class PlayerTest(ModTest):
         self.assertEqual(self.telemetry()["t"] - first, 1.0)
 
     def test_the_worlds_clock_stands_still_in_the_pause_menu(self):
-        # The phone holds its videos and sound while it does; the sample clock (t) runs on meanwhile.
+        # The phone holds its screen and sound while it does; the sample clock (t) runs on meanwhile.
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.world.tick(1)
         running = self.telemetry()["world"]
@@ -93,17 +102,8 @@ class PlayerTest(ModTest):
         self.assertAlmostEqual(player["x"], PHONE_X, delta=0.01)
         self.assertAlmostEqual(player["y"], PHONE_Y, delta=0.01)
         self.assertAlmostEqual(player["yaw"], 238.9, delta=0.05)
-        self.assertEqual(sorted(player), ["alive", "pitch", "x", "y", "yaw"])  # no height: the phone is a map
+        self.assertEqual(sorted(player), ["alive", "x", "y", "yaw"])  # no height: the phone is a map
         self.assertIs(player["alive"], True)
-        self.assertEqual(player["pitch"], -5)  # the camera, a little down
-
-    def test_the_cameras_pitch_up_positive_down_negative(self):
-        # The phone moves the monsters up and down with it. Unreal keeps it in 0..360: 350 is 10 down.
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        for unreal, phone in ((350, -10), (20, 20), (-30, -30)):
-            self.world.lookUp(unreal)
-            self.world.tick(1)
-            self.assertEqual(self.telemetry()["player"]["pitch"], phone)
 
     def test_walking_along_ue_x_is_north_on_the_phone(self):
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
@@ -203,15 +203,14 @@ class CrtvTest(ModTest):
 
     def crtv(self):
         crtv = self.telemetry()["crtv"]
-        del crtv["needleColours"]  # NeedleColourTest
+        del crtv["needleColours"], crtv["miniGame"]  # NeedleColourTest, NativeTest
         return crtv
 
     # Values below are what the game reported: the dial runs 0..1 and a signal is 0 or 1.
     def test_tuned_enemy_signal_is_sent(self):
         self.tune(True, 0.23, 1.0, 2)
         self.world.tick(1)
-        self.assertEqual(self.crtv(), {"active": True, "frequency": 0.23, "signalType": "enemy", "video": None,
-                                       "videoTime": None, "fineTune": None})
+        self.assertEqual(self.crtv(), {"active": True, "frequency": 0.23, "signalType": "enemy"})
 
     def test_signal_type_is_none_without_strength(self):
         self.tune(True, 0.5, 0, 2)
@@ -221,8 +220,7 @@ class CrtvTest(ModTest):
     def test_lowered_crtv_ignores_cached_signal(self):
         self.tune(False, 0.0, 1.0, 2)
         self.world.tick(1)
-        self.assertEqual(self.crtv(), {"active": False, "frequency": 0.0, "signalType": "none", "video": None,
-                                       "videoTime": None, "fineTune": None})
+        self.assertEqual(self.crtv(), {"active": False, "frequency": 0.0, "signalType": "none"})
 
     def test_state_is_logged_on_change(self):
         self.tune(True, 0.23, 1.0, 1)
@@ -245,293 +243,6 @@ class CrtvTest(ModTest):
         self.assertEqual(self.enemy_ids(), ["Fearful_1"])
         self.assertEqual(self.logged("[TF-CRTV] read error"), 1)
         self.assertEqual(self.logged("crtv update error"), 1)
-
-
-class CrtvScreenTest(ModTest):
-    """What the in-game CRTV's screen plays, from its Bink players, so the phone can show the same."""
-
-    def setUp(self):
-        super().setUp()
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.radio = self.world.radio
-        self.radio["active"] = True
-
-    def crtv(self):
-        self.world.tick(1)
-        return self.telemetry()["crtv"]
-
-    def tune(self, signal_type):
-        """What the CRTV is tuned to: None, or ERadioSignalFMODType (1 a found waypoint, 2 an enemy)."""
-        self.radio["cachedHighestSignalStrength"] = 0.0 if signal_type is None else 1.0
-        self.radio["cachedHighestStrengthSignalType"] = signal_type or 0
-
-    def test_enemy_video_and_time(self):
-        self.tune(2)
-        self.world.playVideo("EnemyVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Enraged_Focused.bk2", 12.5)
-        crtv = self.crtv()
-        self.assertEqual((crtv["video"], crtv["videoTime"]), ("Bink/Enraged_Focused", 12.5))
-        self.assertEqual(self.logged("[TF-CRTV] screen plays Bink/Enraged_Focused"), 1)
-
-    def test_story_video_with_a_windows_path_and_no_time(self):
-        self.tune(1)
-        self.world.playVideo("WaypointVideoPlayer_Bink", r"C:\Game\Movies\CRTV_Movies\Bink\Shipping\Mov_CRTV_Clinic.bk2")
-        crtv = self.crtv()
-        self.assertEqual((crtv["video"], crtv["videoTime"]), ("Bink/Shipping/Mov_CRTV_Clinic", None))
-
-    def test_a_waypoint_video_playing_untuned_is_not_shown(self):
-        # The game plays the waypoint's video as soon as the CRTV is up and shows it only once tuned in:
-        # with the dial at 0, Mov_CRTV_Clinic plays but isn't on the screen.
-        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Shipping/Mov_CRTV_Clinic.bk2", 4)
-        self.assertIsNone(self.crtv()["video"])
-        self.assertEqual(self.logged("[TF-CRTV] screen plays Bink/Shipping/Mov_CRTV_Clinic"), 0)
-        self.tune(1)
-        self.assertEqual(self.crtv()["video"], "Bink/Shipping/Mov_CRTV_Clinic")
-
-    def test_the_screen_plays_a_video_behind_the_fine_tune_mini_game(self):
-        # On the waypoint's channel, not found yet, the game's screen shows a video, not static (the user, 2026-10-06).
-        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Shipping/Mov_CRTV_Clinic.bk2", 4)
-        self.tune(0)
-        crtv = self.crtv()
-        self.assertEqual((crtv["video"], crtv["videoTime"]), ("Bink/Shipping/Mov_CRTV_Clinic", 4.0))
-
-    def test_without_the_waypoints_video_the_background_plays_behind_the_mini_game(self):
-        # Its folder is part of the path the phone asks the companion for, which converts it on request.
-        self.world.playVideo("BGStaticVideoPlayer_Bink", r"C:\Game\Townfall\Content\Movies\UI\Static\Background.bk2", 1.5)
-        self.tune(0)
-        self.assertEqual(self.crtv()["video"], "UI/Static/Background")
-        self.tune(None)
-        self.assertIsNone(self.crtv()["video"])  # not behind the plain static: the phone has its own for that
-
-    def test_a_video_in_a_folder_of_its_own_keeps_the_folder_in_its_path(self):
-        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/Cutscene_Diegetic_Movies/Screen.bk2")
-        self.tune(1)
-        self.assertEqual(self.crtv()["video"], "Cutscene_Diegetic_Movies/Screen")
-
-    def test_which_players_play_during_the_mini_game_is_logged(self):
-        self.world.playVideo("BGStaticVideoPlayer_Bink", "./Movies/UI/Background.bk2", 0)
-        self.tune(0)
-        self.crtv()
-        self.assertEqual(self.logged("[TF-CRTV] mini-game: WaypointVideoPlayer_Bink: idle, BGStaticVideoPlayer_Bink: "
-                                     "UI/Background (url ./Movies/UI/Background.bk2), EnemyVideoPlayer_Bink: idle"), 1)
-
-    def test_the_boxs_first_samples_are_traced_in_the_log(self):
-        self.tune(0)
-        for step in range(25):
-            self.world.fineTuneUi["box"]["x"] = 100 + 10 * step
-            self.world.tick(1)
-        traces = [line for line in self.logs() if "fine tune trace" in line]
-        self.assertEqual(len(traces), 2, traces)  # 10 + 10 samples so far, 5 waiting
-        self.assertIn("bar centre 300.0, diamond centre 300.0", traces[0])
-        self.assertIn("0.00:110.0 1.00:120.0", traces[0])  # seconds since the start : the box's centre
-        self.tune(None)
-        self.world.tick(1)  # the mini-game ends: the last samples are logged, not lost
-        traces = [line for line in self.logs() if "fine tune trace" in line]
-        self.assertEqual(len(traces), 3, traces)
-        self.assertTrue(traces[2].endswith("20.00:310.0 21.00:320.0 22.00:330.0 23.00:340.0 24.00:350.0"), traces[2])
-        self.tune(0)  # the next mini-game is traced from its start too
-        self.world.tick(1)
-        self.world.tick(1)
-        self.tune(None)
-        self.world.tick(1)
-        self.assertEqual(len([line for line in self.logs() if "fine tune trace" in line]), 4)
-
-    def test_a_long_mini_game_is_traced_only_at_its_start(self):
-        self.tune(0)
-        for step in range(60):
-            self.world.fineTuneUi["box"]["x"] = 100 + step
-            self.world.tick(1)
-        self.assertEqual(len([line for line in self.logs() if "fine tune trace" in line]), 4)  # 40 samples, no more
-
-    def test_only_the_tuned_signals_player_counts(self):
-        self.world.playVideo("EnemyVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Enraged_Focused.bk2", 1)
-        self.world.playVideo("WaypointVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Shipping/Mov_CRTV_Clinic.bk2", 1)
-        self.tune(1)
-        self.assertEqual(self.crtv()["video"], "Bink/Shipping/Mov_CRTV_Clinic")
-        self.tune(2)
-        self.assertEqual(self.crtv()["video"], "Bink/Enraged_Focused")
-        self.world.playVideo("EnemyVideoPlayer_Bink", None)
-        self.assertIsNone(self.crtv()["video"])  # not the waypoint's in its place
-
-    # The mini-game runs while the CRTV is tuned to a waypoint that isn't found yet (signal type 0). The screen's
-    # widget has no canvas of its own for it, only the bar, the box, the diamond and the text (UE4SS.log 2026-10-06).
-    def test_fine_tune_positions_along_the_bar(self):
-        self.assertIsNone(self.crtv()["fineTune"])  # nothing tuned in
-        self.tune(0)
-        ui = self.world.fineTuneUi
-        ui["box"]["x"] = 190  # 20 wide: centre 200 of the bar's 100-500
-        tune = self.crtv()["fineTune"]
-        self.assertEqual(tune, {"box": 0.25, "zone": 0.5, "text": "FINE TUNE - SEARCHING"})
-        self.assertEqual(self.logged('[TF-CRTV] fine tune "FINE TUNE - SEARCHING": bar 100.0+400.0 box 190.0+20.0 '
-                                     'diamond 285.0+30.0'), 1)
-
-    def test_fine_tune_with_centred_slots_and_a_moving_box(self):
-        self.tune(0)
-        ui = self.world.fineTuneUi
-        ui["align"] = 0.5  # slot positions are then the centres
-        ui["band"]["x"], ui["box"]["x"], ui["zone"]["x"] = 300, 200, 300
-        ui["box"]["t"]["X"] = 50  # the widget moves the box by its render offset: centre 250 of 100-500
-        tune = self.crtv()["fineTune"]
-        self.assertEqual((tune["box"], tune["zone"]), (0.375, 0.5))
-
-    def test_the_mini_game_is_only_sent_while_the_game_runs_it(self):
-        self.world.fineTuneUi["box"]["x"] = 190  # the widget always has its members
-        for signal, sent in ((None, False), (2, False), (0, True), (1, False), (None, False), (0, True)):
-            self.tune(signal)
-            self.assertEqual(self.crtv()["fineTune"] is not None, sent, f"signal {signal}")
-        self.assertEqual(self.logged("mini-game expected"), 0)  # and nothing is wrong while it isn't due
-
-    def test_the_box_moving_does_not_flood_the_log(self):
-        self.tune(0)
-        for step in range(7):
-            self.world.fineTuneUi["box"]["x"] = 100 + 40 * step  # it moves every sample
-            self.crtv()
-        lines = self.logged('[TF-CRTV] fine tune "FINE TUNE - SEARCHING"')
-        self.assertTrue(1 <= lines <= 4, lines)  # the first, then about every two seconds
-        self.world.fineTuneUi["band"]["w"] = 380  # the bar changed: that is logged at once
-        self.crtv()
-        self.assertEqual(self.logged('[TF-CRTV] fine tune "FINE TUNE - SEARCHING": bar 100.0+380.0'), 1)
-
-    def test_a_widget_without_the_bar_box_or_diamond_is_logged_once(self):
-        self.world.crtvWidget["Image_FineTuneZone"] = None
-        self.tune(0)
-        self.assertIsNone(self.crtv()["fineTune"])
-        self.world.tick(3)
-        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the CRTV's screen widget has no "
-                                     "fine-tune bar, box or diamond"), 1)
-
-    def test_a_fine_tune_bar_without_width_is_logged(self):
-        self.tune(0)
-        self.world.fineTuneUi["band"]["w"] = 0
-        self.assertIsNone(self.crtv()["fineTune"])
-        self.assertEqual(self.logged("mini-game expected, none sent to the phone: the bar has no width"), 1)
-
-    def test_a_box_without_a_position_is_not_sent_as_invalid_json(self):
-        self.tune(0)
-        self.world.fineTuneUi["box"]["x"] = float("inf")
-        self.assertIsNone(self.crtv()["fineTune"])  # telemetry stays readable: crtv() parsed the whole file
-        self.assertEqual(self.logged("the box or diamond has no position"), 1)
-
-    def test_nothing_while_lowered_or_stopped(self):
-        self.tune(2)
-        self.world.playVideo("EnemyVideoPlayer_Bink", "./Movies/CRTV_Movies/Bink/Enraged_Focused.bk2", 3)
-        self.radio["active"] = False
-        self.assertIsNone(self.crtv()["video"])
-        self.radio["active"] = True
-        self.world.playVideo("EnemyVideoPlayer_Bink", None)
-        self.assertIsNone(self.crtv()["video"])
-
-
-class RecordTest(ModTest):
-    """The recording of the CRTV's screen (tf_record.lua), switched on from the phone, for a bug report."""
-
-    def setUp(self):
-        super().setUp()
-        self.record_command = self.tmp / "townfall-companion-record.json"
-        self.recording = self.tmp / "townfall-ui-recording.txt"
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.radio = self.world.radio
-        self.radio["active"] = True
-        self.world.tick(3)
-        self.seq = int(time.time() * 1000)  # the bridge's clock: the mod ignores a command that looks old
-
-    def switch(self, on):
-        self.seq += 1
-        self.record_command.write_text(json.dumps({"on": on, "seq": self.seq}))
-        self.world.tick(1)  # the command is carried out...
-        self.world.tick(1)  # ...and the telemetry, written before it within a tick, says so
-
-    def text(self):
-        return self.recording.read_text(encoding="utf-8")
-
-    def lines(self, containing):
-        return [line for line in self.text().splitlines() if containing in line]
-
-    def test_nothing_is_recorded_unless_the_phone_asks(self):
-        self.world.tick(5)
-        self.assertFalse(self.recording.exists())
-        self.assertFalse(self.telemetry()["recording"])
-
-    def test_a_leftover_command_does_not_start_a_recording(self):
-        # The first command seen is a baseline, as for every command: one from an earlier session starts nothing.
-        self.record_command.write_text(json.dumps({"on": True, "seq": 50}))
-        self.world.tick(3)
-        self.assertFalse(self.recording.exists())
-
-    def test_switched_on_it_writes_everything_once_and_then_what_changes(self):
-        self.switch(True)
-        self.assertTrue(self.telemetry()["recording"])
-        self.assertEqual(self.logged("[TF-RECORD] UI recording started:"), 1)
-        first = self.text()
-        self.assertIn("Townfall Companion UI recording", first)
-        for name in ("Image_NarrowBand", "Image_DigitalNeedle", "Image_FineTuneZone", "DialocTextBlock_FineTune"):
-            self.assertEqual(len(self.lines(f"{name}: ")), 1, name)  # every widget of the screen, once
-        self.assertIn('text="FINE TUNE - SEARCHING"', self.text())
-        self.assertIn("slot=100.0,0.0 size 20.0x10.0", self.lines("Image_DigitalNeedle: ")[0])
-        self.assertIn("screen.AdvancedTuningMotionControl_DistanceToTarget: 0.000", self.text())
-        self.assertIn("radio.frequency: 0.000", self.text())
-        self.assertIn("CRTV: active=true dial=0.000 signal=0.00 type=none", self.text())
-        self.world.tick(5)
-        self.assertEqual(self.text(), first)  # nothing changed: nothing written
-
-        self.world.fineTuneUi["box"]["x"] = 150
-        self.world.tick(1)
-        self.assertEqual(len(self.lines("Image_DigitalNeedle: ")), 2)
-        self.assertIn("slot=150.0,0.0", self.lines("Image_DigitalNeedle: ")[1])
-        self.assertEqual(len(self.lines("Image_NarrowBand: ")), 1)  # the bar didn't move
-
-    def test_the_radios_and_the_characters_state_and_the_montage_are_in_it(self):
-        self.switch(True)
-        self.world.player["IsUsingRadio"] = True
-        self.world.anim["RadioAlpha"] = 0.5
-        self.radio["cachedHighestStrengthSignalType"] = 0
-        self.radio["cachedHighestSignalStrength"] = 1.0
-        self.world.tick(1)
-        self.assertIn("pawn.IsUsingRadio: true", self.text())
-        self.assertIn("anim.RadioAlpha: 0.500", self.text())
-        self.assertIn("radio.cachedHighestSignalStrength: 1.000", self.text())
-        self.assertIn("CRTV: active=true dial=0.000 signal=1.00 type=waypoint", self.text())
-
-    def test_the_phones_presses_are_marked(self):
-        self.switch(True)
-        (self.tmp / "townfall-companion-confirm.json").write_text(json.dumps({"seq": int(time.time() * 1000)}))
-        self.world.tick(3)
-        self.assertEqual(len(self.lines("EVENT: phone pressed F")), 1)
-
-    def test_switched_off_it_stops_and_closes_the_file(self):
-        self.switch(True)
-        self.world.fineTuneUi["box"]["x"] = 150
-        self.world.tick(1)
-        written = self.text()
-        self.switch(False)
-        self.assertFalse(self.telemetry()["recording"])
-        self.assertEqual(self.logged("[TF-RECORD] UI recording stopped:"), 1)
-        self.world.fineTuneUi["box"]["x"] = 200
-        self.world.tick(3)
-        self.assertEqual(self.text(), written)
-
-    def test_it_starts_afresh_each_time(self):
-        self.switch(True)
-        self.switch(False)
-        self.world.fineTuneUi["box"]["x"] = 250
-        self.switch(True)
-        self.assertEqual(len(self.lines("Image_DigitalNeedle: ")), 1)  # the file was truncated, the first sample is whole
-        self.assertIn("slot=250.0", self.lines("Image_DigitalNeedle: ")[0])
-
-    def test_it_stops_by_itself_after_a_quarter_of_an_hour(self):
-        self.switch(True)
-        for _ in range(910):
-            self.world.tick(1)
-        self.assertFalse(self.telemetry()["recording"])
-        self.assertEqual(self.logged("UI recording reached 900 s"), 1)
-
-    def test_a_folder_that_cant_be_written_is_logged_and_the_game_goes_on(self):
-        self.tmp_recording_blocker = self.recording
-        self.recording.mkdir()  # a directory where the file should be: it can't be opened for writing
-        self.switch(True)
-        self.assertFalse(self.telemetry()["recording"])
-        self.assertEqual(self.logged("can't write the UI recording"), 1)
-        self.world.tick(2)  # and the mod keeps running
-        self.assertIn("player", self.telemetry())
 
 
 class EnemyCrtvTest(ModTest):
@@ -576,15 +287,14 @@ class EnemyCrtvTest(ModTest):
         self.raise_crtv()
         self.world.setSourceValue(self.near, "StaticSourceStrengthMap", 0.6)
         self.world.tick(1)
-        sent = {e["id"]: (e["signal"], e["channel"], e["video"]) for e in self.telemetry()["enemies"]}
-        self.assertEqual(sent, {"Fearful_1": (0.6, 0.23, "Bink/TheFallen_Focused"),
-                                "Enraged_2": (0.0, 0.23, "Bink/TheFallen_Focused")})
+        sent = {e["id"]: (e["signal"], e["channel"]) for e in self.telemetry()["enemies"]}
+        self.assertEqual(sent, {"Fearful_1": (0.6, 0.23), "Enraged_2": (0.0, 0.23)})
 
-    def test_a_new_enemy_is_logged_once_with_its_clip_and_its_tolerance_sent(self):
+    def test_a_new_enemy_is_logged_once_with_its_channel_and_its_tolerance_sent(self):
         for _ in range(3):
             self.world.tick(10)
         self.assertEqual(self.logged("[TF-ENEMY] new BP_TestAIAgent_C"), 2)
-        self.assertEqual(self.logged("crtv channel 0.230 clip Bink/TheFallen_Focused"), 2)  # which creature the phone shows
+        self.assertEqual(self.logged("crtv channel 0.230"), 2)
         self.assertEqual([e["tolerance"] for e in self.telemetry()["enemies"]], [0.02, 0.02])  # clear within
         self.assertEqual([e["toleranceOuter"] for e in self.telemetry()["enemies"]], [0.05, 0.05])  # comes in within
 
@@ -595,7 +305,6 @@ class EnemyCrtvTest(ModTest):
         self.assertEqual(self.sent()["Crazed_3"], (False, False))
         crazed = next(e for e in self.telemetry()["enemies"] if e["id"] == "Crazed_3")
         self.assertIsNone(crazed["channel"])
-        self.assertIsNone(crazed["video"])
         self.assertEqual(self.logged("Crazed_3 has no RadioStaticSource"), 1)
         self.assertEqual(self.logged("read error"), 0)
 
@@ -614,8 +323,8 @@ class WaypointSignalTest(ModTest):
     def setUp(self):
         super().setUp()
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.clinic = self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True, "Bink/Shipping/Mov_CRTV_Clinic")
-        self.world.addWaypoint("Later", UE_X + 6000, UE_Y, UE_Z, 0.62, False, "Bink/Shipping/Mov_CRTV_BodyBags", True)
+        self.clinic = self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True)
+        self.world.addWaypoint("Later", UE_X + 6000, UE_Y, UE_Z, 0.62, False, True)
         self.world.tick(1)
 
     def signals(self):
@@ -624,8 +333,9 @@ class WaypointSignalTest(ModTest):
     def test_only_active_waypoints_are_sent(self):
         clinic = self.signals()["Clinic"]
         self.assertEqual(list(self.signals()), ["Clinic"])
-        self.assertEqual((clinic["kind"], clinic["channel"], clinic["tolerance"], clinic["toleranceOuter"], clinic["video"]),
-                         ("waypoint", 0.15, 0.02, 0.04, "Bink/Shipping/Mov_CRTV_Clinic"))
+        self.assertEqual((clinic["kind"], clinic["channel"], clinic["tolerance"], clinic["toleranceOuter"]),
+                         ("waypoint", 0.15, 0.02, 0.04))
+        self.assertNotIn("video", clinic)  # the phone shows the game's own screen
         self.assertAlmostEqual(clinic["y"], PHONE_Y + 10, delta=0.01)
         self.assertEqual((clinic["rangeSignal"], clinic["signal"], clinic["tuned"], clinic["found"]), (1.0, 0.0, False, False))
 
@@ -650,16 +360,7 @@ class WaypointSignalTest(ModTest):
     def test_waypoint_info_is_logged_once(self):
         self.world.tick(5)
         self.assertEqual(self.logged("[TF-SIGNAL] waypoint Clinic: channel 0.150 tolerance 0.020/0.040 "
-                                     "reach 2000-10000 cm video Bink/Shipping/Mov_CRTV_Clinic"), 1)
-
-    def test_a_video_the_story_sets_later_is_sent(self):
-        self.world.setWaypointVideo(self.clinic, None)
-        self.world.tick(1)
-        self.assertIsNone(self.signals()["Clinic"]["video"])
-        self.world.setWaypointVideo(self.clinic, "Bink/Shipping/Mov_CRTV_Pharmacy")
-        self.world.tick(1)
-        self.assertEqual(self.signals()["Clinic"]["video"], "Bink/Shipping/Mov_CRTV_Pharmacy")
-        self.assertEqual(self.logged("video Bink/Shipping/Mov_CRTV_Pharmacy"), 1)
+                                     "reach 2000-10000 cm"), 1)
 
     def test_a_reach_without_cutoff_is_full_everywhere(self):
         # Return_to_Clinic: 1000 to -1 cm, and the game gives it full strength.
@@ -667,30 +368,6 @@ class WaypointSignalTest(ModTest):
         self.world.movePlayer(UE_X - 50000, UE_Y, UE_Z)
         self.world.tick(1)
         self.assertEqual(self.signals()["Clinic"]["rangeSignal"], 1.0)
-
-    def test_quiet_until_it_talks(self):
-        self.assertIsNone(self.signals()["Clinic"]["dialogue"])
-        self.assertEqual(self.logged("[TF-SIGNAL] waypoint Clinic is quiet"), 1)
-
-    def test_the_line_it_says_and_how_far_in(self):
-        self.world.speak(self.clinic, "10c5", 2350)
-        self.world.tick(1)
-        self.assertEqual(self.signals()["Clinic"]["dialogue"], {"line": "10c5", "id": "Clinic_Clear", "ms": 2350, "clear": True})
-        self.assertEqual(self.logged('[TF-SIGNAL] waypoint Clinic says line "10c5" (dialogue "Clinic_Clear", clear)'), 1)
-        self.world.speak(self.clinic, "10c6", 400, True)
-        self.world.tick(1)
-        self.assertEqual(self.signals()["Clinic"]["dialogue"], {"line": "10c6", "id": "Clinic_Dist", "ms": 400, "clear": False})
-        self.world.speak(self.clinic, None)
-        self.world.tick(1)
-        self.assertIsNone(self.signals()["Clinic"]["dialogue"])
-        self.assertEqual(self.logged("[TF-SIGNAL] waypoint Clinic is quiet"), 2)
-
-    def test_an_unreadable_dialogue_keeps_the_waypoint(self):
-        self.clinic["WaypointDialogueClear"] = None
-        self.world.speak(self.clinic, "10c5", 0)
-        self.world.tick(1)
-        self.assertIsNone(self.signals()["Clinic"]["dialogue"])
-        self.assertEqual(self.logged("[TF-SIGNAL] waypoint Clinic dialogue unreadable"), 1)
 
     def test_templates_and_second_copies_are_not_sent(self):
         self.world.addWaypointTemplate("Clinic", 0.15)
@@ -741,7 +418,7 @@ class NoWaypointManagerTest(ModTest):
 
     def test_nothing_is_sent_and_it_is_logged(self):
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True, "Bink/Shipping/Mov_CRTV_Clinic")
+        self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True)
         self.world.tick(2)
         self.assertEqual(self.telemetry()["signals"], [])
         self.assertEqual(self.logged("(no URadioWaypointManager)"), 1)
@@ -775,13 +452,24 @@ class RangeSignalTest(ModTest):
 
 
 class PhoneCommandTest(ModTest):
+    phone_mode = None  # what the phone says it is in, every second (seconds)
+
     def seconds(self, n):
+        """n seconds on the game's clock, the phone saying its mode every second meanwhile, as it does."""
         for _ in range(n):
+            if self.phone_mode:
+                self.mode(*self.phone_mode)
             self.world.tick(1)  # one tick is a second on the game's clock
 
+    def say(self, selector, on_monitor=False):
+        """The phone switches to `selector` (in VIEW, the monitor showing the CRTV or not), and keeps saying it."""
+        self.phone_mode = (selector, on_monitor)
+        self.mode(selector, on_monitor)
+
     def command(self, seq, active, frequency, animate=False):
-        # Written the way bridge.py writes it.
-        self.commands_file.write_text(json.dumps({"seq": seq, "active": active, "animate": animate, "frequency": frequency}))
+        # Written the way bridge.py writes it: active only ever switches the CRTV on.
+        switch = {"active": True, "animate": animate} if active else {}
+        self.commands_file.write_text(json.dumps({**switch, "frequency": frequency, "seq": seq}))
 
     def play(self, command_before_load=True):
         if command_before_load:
@@ -789,6 +477,15 @@ class PhoneCommandTest(ModTest):
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.radio = self.world.radio
         self.world.tick(3)
+
+    def state(self, flag, using, alpha):
+        """What the character keeps: the radio's active mode, IsUsingRadio and the animation's RadioAlpha (the hands)."""
+        self.radio["active"] = flag
+        self.world.player["IsUsingRadio"] = using
+        self.world.anim["RadioAlpha"] = alpha
+
+    def requests(self):
+        return list(self.radio["requests"].values())
 
     def test_leftover_command_is_not_applied_on_load(self):
         self.play()
@@ -811,52 +508,122 @@ class PhoneCommandTest(ModTest):
         self.assertFalse(self.radio["active"])
         self.assertEqual(self.logged("phone command"), 1)
 
-    def test_silently_by_default_without_the_animation(self):
+    def test_silently_by_default_and_put_away_silently_in_av_out(self):
         self.play()
+        self.say("VIEW")
         self.command(101, True, 0.23)
-        self.world.tick(1)
+        self.seconds(1)
         self.assertTrue(self.radio["active"])
-        self.assertEqual(list(self.radio["requests"].values()), [])  # no request: nothing shows on the monitor
+        self.assertEqual(self.requests(), [])  # no request: nothing shows on the monitor
         self.assertEqual(self.logged("phone command: active=true (silent)"), 1)
-        self.command(102, False, 0.23)
-        self.world.tick(1)
-        self.assertFalse(self.radio["active"])
-        self.assertEqual(list(self.radio["requests"].values()), [])
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, []))
+        self.assertEqual(self.radio["frequency"], 0.23)  # the dial stays where the phone left it
+        self.assertEqual(self.logged("[TF-CRTV] putting the phone's CRTV away: the phone is in AV OUT"), 1)
 
-    def test_animated_raising_and_lowering_go_through_the_request_the_controller_runs(self):
+    def test_with_the_animation_up_and_down_through_the_request_the_radio_button_runs(self):
         self.play()
+        self.say("VIEW", on_monitor=True)
         self.command(101, True, 0.23, animate=True)
-        self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), ["on"])  # RequestRadioON: Bill raises it with his animation
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on"])  # RequestRadioON: Bill raises it with his animation
         self.assertEqual(self.logged("phone command: active=true (animated)"), 1)
-        self.command(102, False, 0.23, animate=True)
-        self.world.tick(1)
-        # Plain first, as the controller lowers it: radio and hands go down together.
-        self.assertEqual(list(self.radio["requests"].values()), ["on", "off"])
+        self.say("AV_OUT")
+        self.seconds(1)
+        # Plain first, as the radio button lowers it: radio and hands go down together.
+        self.assertEqual(self.requests(), ["on", "off"])
         self.assertFalse(self.radio["active"])
 
-    def state(self, flag, using, alpha):
-        """What the character keeps: the radio's active mode, IsUsingRadio and the animation's RadioAlpha (the hands)."""
-        self.radio["active"] = flag
-        self.world.player["IsUsingRadio"] = using
-        self.world.anim["RadioAlpha"] = alpha
+    def test_a_crtv_the_player_raised_is_not_the_phones_to_put_away(self):
+        self.play()
+        self.say("VIEW")
+        self.state(True, True, 1.0)    # raised with the radio button
+        self.command(101, True, 0.23)  # the phone, a step behind, asks for it on
+        self.seconds(1)
+        self.say("AV_OUT")
+        self.seconds(3)
+        self.assertEqual((self.radio["active"], self.requests()), (True, []))
 
-    def requests(self):
-        return list(self.radio["requests"].values())
+    def test_once_down_a_crtv_the_phone_switched_on_is_no_longer_the_phones(self):
+        self.play()
+        self.say("VIEW")
+        self.command(101, True, 0.23)
+        self.seconds(1)
+        self.radio["active"] = False  # put away with the radio button...
+        self.seconds(1)
+        self.state(True, True, 1.0)   # ...and raised with it again
+        self.say("AV_OUT")
+        self.seconds(3)
+        self.assertEqual((self.radio["active"], self.requests()), (True, []))
+
+    def test_a_raise_after_the_phone_left_view_is_left_out(self):
+        self.play()
+        self.say("AV_OUT")
+        self.command(101, True, 0.23)
+        self.seconds(1)
+        self.assertFalse(self.radio["active"])
+        self.assertEqual(self.radio["frequency"], 0.23)  # the dial still moves
+        self.assertEqual(self.logged("[TF-CRTV] the phone isn't in VIEW: its CRTV stays as it is"), 1)
+
+    def test_a_phone_that_stops_saying_its_mode_has_its_crtv_put_away(self):
+        # Its page closed without a word, it fell asleep, or the Wi-Fi went.
+        self.play()
+        self.say("VIEW")
+        self.command(101, True, 0.23)
+        self.seconds(3)
+        self.phone_mode = None
+        self.seconds(4)
+        self.assertTrue(self.radio["active"])  # a moment's silence is nothing
+        self.seconds(2)
+        self.assertFalse(self.radio["active"])
+        self.assertEqual(self.logged("[TF-CRTV] putting the phone's CRTV away: the phone went quiet"), 1)
+
+    def test_wanted_on_the_monitor_a_silent_crtv_is_switched_off_for_the_phone_to_raise_it(self):
+        self.play()
+        self.say("VIEW")
+        self.command(101, True, 0.23)
+        self.seconds(1)
+        self.say("VIEW", on_monitor=True)
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, []))  # off at once, the character left alone
+        self.assertEqual(self.logged("putting the phone's CRTV away: the phone wants it shown the other way"), 1)
+        self.command(102, True, 0.23, animate=True)  # the phone, once the game reports it down
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on"])
+
+    def test_no_longer_wanted_on_the_monitor_a_raised_crtv_is_lowered_with_the_animation(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.say("VIEW")
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, ["on", "off"]))  # never the silent flip
+        self.command(102, True, 0.23)
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on", "off"]))
 
     def test_a_lowering_waits_for_the_raise_to_finish(self):
         # Asked while the radio is still coming up, the game drops it or half does it: the radio gone, the hands lagging.
         self.play()
+        self.say("VIEW", on_monitor=True)
+        self.radio["ignoreRequests"] = True
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
         self.state(False, True, 0.4)  # coming up
-        self.command(101, False, 0.23, animate=True)
+        self.say("AV_OUT")
         self.seconds(2)
-        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.requests(), ["on"])
+        self.radio["ignoreRequests"] = False
         self.state(True, True, 1.0)   # up
         self.seconds(1)
-        self.assertEqual(self.requests(), ["off"])  # plain: radio and hands go down together
+        self.assertEqual(self.requests(), ["on", "off"])  # plain: radio and hands go down together
+        self.assertFalse(self.radio["active"])
 
     def test_a_raise_waits_for_the_lowering_to_finish(self):
         self.play()
+        self.say("VIEW", on_monitor=True)
         self.state(False, False, 0.5)  # the hands are still going down
         self.command(101, True, 0.23, animate=True)
         self.seconds(2)
@@ -865,93 +632,96 @@ class PhoneCommandTest(ModTest):
         self.seconds(1)
         self.assertEqual(self.requests(), ["on"])
 
-    def test_the_latest_wish_wins_while_the_character_is_busy(self):
+    def test_back_in_view_before_it_is_put_away_the_crtv_stays_the_phones(self):
         self.play()
-        self.state(False, True, 0.4)  # coming up
-        self.command(101, False, 0.23, animate=True)
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
         self.seconds(1)
-        self.command(102, True, 0.23, animate=True)  # the phone changed its mind
+        self.radio["ignoreRequests"] = True  # the character is busy
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on", "off"])
+        self.say("VIEW", on_monitor=True)
+        self.seconds(6)
+        self.assertEqual(self.requests(), ["on", "off"])  # no more lowering, and nothing to raise
+        self.radio["ignoreRequests"] = False
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on", "off", "off"])  # still the phone's: AV OUT puts it away
+        self.assertFalse(self.radio["active"])
+
+    def test_back_in_view_while_it_is_still_coming_up_it_comes_up_and_stays_the_phones(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.radio["ignoreRequests"] = True
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.state(False, True, 0.4)  # coming up
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.say("VIEW", on_monitor=True)
         self.seconds(1)
         self.state(True, True, 1.0)
         self.seconds(3)
-        self.assertEqual(self.requests(), [])  # it is up, as the phone last wanted
+        self.assertEqual(self.requests(), ["on"])  # up, as the phone last wanted
+        self.radio["ignoreRequests"] = False
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on", "off"])
 
     def test_a_lowering_the_game_ignores_is_asked_again_and_then_forced(self):
-        # Forced, the radio goes at once but the hands lag, so the plain request is the one asked first.
+        # Forced, the radio goes at once but the hands lag, so the plain request is the one asked first. The phone
+        # saying AV OUT again meanwhile doesn't start the asking over.
         self.play()
-        self.state(True, True, 1.0)
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
         self.radio["ignoreRequests"] = True
-        self.command(101, False, 0.23, animate=True)
+        self.say("AV_OUT")
         self.seconds(9)
-        self.assertEqual(self.requests(), ["off", "off", "off (forced)", "off (forced)", "off (forced)"])
+        self.assertEqual(self.requests(), ["on", "off", "off", "off (forced)", "off (forced)", "off (forced)"])
         self.seconds(5)
         self.assertEqual(self.logged("the character didn't carry out the phone's request: dropped"), 1)
         asked = len(self.requests())
         self.seconds(6)
-        self.assertEqual(len(self.requests()), asked)  # and the asking stopped
+        self.assertEqual(len(self.requests()), asked)  # and the asking stopped: the CRTV is left to the game
 
-    def test_the_phone_saying_it_again_doesnt_start_the_asking_over(self):
+    def test_a_paused_game_is_asked_again_once_it_runs_and_nothing_is_given_up_meanwhile(self):
         self.play()
-        self.state(True, True, 1.0)
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
         self.radio["ignoreRequests"] = True
-        seq = 101
-        for _ in range(5):
-            self.command(seq, False, 0.23, animate=True)  # the phone repeats it every couple of seconds
-            seq += 1
-            self.seconds(2)
-        self.assertIn("off (forced)", self.requests())
-
-    def test_a_crtv_up_silently_is_put_away_by_an_animated_lowering_with_the_silent_switch(self):
-        self.play()
-        self.state(True, False, 0.0)  # on, nothing held up
-        self.command(101, False, 0.23, animate=True)
+        self.say("AV_OUT")
         self.seconds(1)
-        self.assertEqual((self.radio["active"], self.requests()), (False, []))
-
-    def test_an_animated_lowering_of_a_crtv_that_is_down_asks_nothing(self):
-        self.play()
-        self.command(101, False, 0.23, animate=True)
-        self.seconds(2)
-        self.assertEqual(self.requests(), [])
-
-    def test_a_silent_command_replaces_a_pending_animated_one(self):
-        self.play()
-        self.state(False, True, 0.4)  # coming up
-        self.command(101, False, 0.23, animate=True)
-        self.seconds(1)
-        self.command(102, True, 0.23)  # silently
-        self.seconds(1)
-        self.state(True, True, 1.0)
+        self.world.paused = True  # the pause menu: the world's clock stands still
+        self.seconds(20)
+        self.assertEqual(self.requests(), ["on", "off"])
+        self.world.paused = False
         self.seconds(3)
-        self.assertEqual(self.requests(), [])  # the earlier lowering is not carried out afterwards
+        self.assertEqual(self.requests(), ["on", "off", "off"])
+        self.assertEqual(self.logged("dropped"), 0)
 
     def test_a_build_without_the_characters_state_is_asked_at_once(self):
         self.play()
         self.world.player["IsUsingRadio"] = None  # nothing to wait for
+        self.say("VIEW", on_monitor=True)
         self.command(101, True, 0.23, animate=True)
         self.seconds(1)
         self.assertEqual(self.requests(), ["on"])
-        self.command(102, False, 0.23, animate=True)
+        self.say("AV_OUT")
         self.seconds(2)
         self.assertEqual(self.requests(), ["on", "off"])
 
-    def test_a_silent_lowering_leaves_the_character_alone(self):
-        self.play()
-        self.command(101, True, 0.23)
-        self.world.tick(1)
-        self.command(102, False, 0.23)
-        self.world.tick(1)
-        self.assertEqual((self.radio["active"], list(self.radio["requests"].values())), (False, []))
-
     def test_an_animated_raise_is_not_asked_for_when_the_radio_is_up_already(self):
-        # Putting it away and raising it the other way is the phone's job (scanner.js): two commands, so the
-        # game's state settles in between.
+        # Putting it away to raise it the other way is the mod's, by the phone's mode: the game's state settles in
+        # between.
         self.play()
         self.command(101, True, 0.23)
         self.world.tick(1)
         self.command(102, True, 0.23, animate=True)
         self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), [])
+        self.assertEqual(self.requests(), [])
 
     def test_an_animated_request_the_game_hasnt_acted_on_yet_is_not_repeated_at_once(self):
         self.play()
@@ -960,25 +730,17 @@ class PhoneCommandTest(ModTest):
         self.world.tick(1)
         self.command(102, True, 0.23, animate=True)  # the phone says it again
         self.world.tick(1)
-        self.assertEqual(list(self.radio["requests"].values()), ["on"])
+        self.assertEqual(self.requests(), ["on"])
         self.command(103, True, 0.23, animate=True)
         self.world.tick(2)  # a moment later it is asked again
-        self.assertEqual(list(self.radio["requests"].values()), ["on", "on"])
-
-    def test_lowering_leaves_the_dial(self):
-        self.play()
-        self.command(101, True, 0.23)
-        self.world.tick(1)
-        self.command(102, False, 0.4)
-        self.world.tick(1)
-        self.assertEqual((self.radio["active"], self.radio["frequency"]), (False, 0.23))
+        self.assertEqual(self.requests(), ["on", "on"])
 
     def test_without_active_only_the_dial_moves_up_or_down(self):
         self.play()
         self.commands_file.write_text(json.dumps({"frequency": 0.3, "seq": 101}))  # tuned behind the scenes
         self.world.tick(1)
         self.assertEqual((self.radio["active"], self.radio["frequency"]), (False, 0.3))  # still down
-        self.radio["active"] = True  # raised with the controller: it comes up where the phone left it
+        self.radio["active"] = True  # raised with the radio button: it comes up where the phone left it
         self.commands_file.write_text(json.dumps({"frequency": 0.35, "seq": 102}))
         self.world.tick(1)
         self.assertEqual((self.radio["active"], self.radio["frequency"]), (True, 0.35))
@@ -1002,9 +764,10 @@ class PhoneCommandTest(ModTest):
 
     def test_garbage_is_ignored(self):
         self.play()
-        self.commands_file.write_text('{"seq": 101, "active": ')
-        self.world.tick(3)
-        self.assertFalse(self.radio["active"])
+        for garbage in ('{"seq": 101, "active": ', '{"active": false, "frequency": 0.3, "seq": 102}'):
+            self.commands_file.write_text(garbage)
+            self.world.tick(3)
+        self.assertEqual((self.radio["active"], self.radio["frequency"]), (False, 0))
         self.assertEqual(self.logged("error"), 0)
 
     def test_commands_wait_for_gameplay(self):
@@ -1015,7 +778,7 @@ class PhoneCommandTest(ModTest):
 
 
 class SteeringTest(ModTest):
-    """The phone sends its own heading; the player turns by as much as the phone turned."""
+    """The phone sends its own heading and tilt; the player turns and looks up or down by as much as the phone did."""
 
     def setUp(self):
         super().setUp()
@@ -1047,17 +810,47 @@ class SteeringTest(ModTest):
         self.assertEqual(tuple(self.world.controlRotation()), (-5, 70))
         self.assertEqual(self.logged("[TF-PLAYER] turned by the phone"), 1)
 
-    def test_tilting_the_phone_leaves_the_games_camera_pitch_alone(self):
-        # Steering turns the player by yaw only (commits 43a48f9, 8c8bd3e): tilt is the scanner view's, on the phone.
+    def test_tilting_the_phone_looks_up_and_down_as_far_as_the_phone_tilts(self):
         self.play()
-        self.steer(350, pitch=10)
+        self.steer(350, pitch=10)  # how far the phone is tilted doesn't matter, only how far it tilts
         self.world.tick(1)
         self.steer(350, pitch=25)  # 15 degrees up on the phone
         self.world.tick(1)
-        self.assertEqual(tuple(self.world.controlRotation()), (-5, 40))
+        self.assertEqual(tuple(self.world.controlRotation()), (10, 40))
         self.steer(20, pitch=-5)   # turned 30 clockwise, tilted 30 down
         self.world.tick(1)
+        self.assertEqual(tuple(self.world.controlRotation()), (-20, 70))
+
+    def test_looking_up_stops_short_of_straight_up(self):
+        self.play()
+        self.steer(350, pitch=-80)
+        self.world.tick(1)
+        self.steer(350, pitch=89)  # 169 degrees up from -5
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[0], 80)
+
+    def test_a_phone_page_from_before_turns_without_tilting(self):
+        self.play()
+        self.steer(350, pitch=10)
+        self.world.tick(1)
+        self.steer(20)  # no tilt in it
+        self.world.tick(1)
         self.assertEqual(tuple(self.world.controlRotation()), (-5, 70))
+
+    def test_steering_the_crtv_looks_up_and_down_with_the_camera(self):
+        self.play()
+        look = self.commands_file.with_name("townfall-companion-look.json")
+        packet_file = self.commands_file.with_name("townfall-companion-native-look.bin")
+        self.steer(350, pitch=0)
+        self.world.tick(1)
+        self.steer(350, pitch=20)  # the camera from -5 to 15 degrees up
+        self.world.tick(1)
+        look.write_text(json.dumps({"on": True, "yaw": 0, "pitch": 33, "seq": self.seq + 10}))  # the phone's own tilt
+        self.world.tick(1)
+        self.assertEqual(struct.unpack("<8sddQQ", packet_file.read_bytes())[2], 15)  # the camera's, not the phone's
+        self.steer(350, pitch=30)  # 10 further up: the CRTV goes along at once
+        self.world.tick(1)
+        self.assertEqual(struct.unpack("<8sddQQ", packet_file.read_bytes())[1:4], (0, 25, 1))
 
     def test_a_tiny_heading_written_with_an_exponent(self):
         self.play()
@@ -1113,7 +906,7 @@ class SteeringTest(ModTest):
 
 
 class FineTuneConfirmTest(ModTest):
-    """The phone's F key: the player's press in the fine-tune mini-game."""
+    """The phone's D-pad centre: the player's press in the fine-tune mini-game, logged with what became of it."""
 
     def setUp(self):
         super().setUp()
@@ -1122,8 +915,9 @@ class FineTuneConfirmTest(ModTest):
     def press(self, age=0.0):
         self.confirm_file.write_text(json.dumps({"seq": int((time.time() - age) * 1000)}))
 
-    def play(self):
+    def play(self, raised=True):
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.radio["active"] = raised
         self.world.tick(2)
 
     def test_first_press_counts_when_there_was_no_file(self):
@@ -1131,7 +925,7 @@ class FineTuneConfirmTest(ModTest):
         self.press()
         self.world.tick(3)
         self.assertEqual(self.world.radio["confirms"], 1)
-        self.assertEqual(self.logged("[TF-CRTV] phone pressed F (fine-tune confirm)"), 1)
+        self.assertEqual(self.logged("[TF-CRTV] phone pressed the D-pad's centre: confirm"), 1)
 
     def test_a_leftover_press_is_not_replayed(self):
         self.press(age=60)
@@ -1139,129 +933,89 @@ class FineTuneConfirmTest(ModTest):
         self.world.tick(3)
         self.assertEqual(self.world.radio["confirms"], 0)
 
-    def test_a_late_press_is_dropped(self):
+    def test_a_late_press_is_dropped_and_logged(self):
         self.play()
         self.press(age=5)
         self.world.tick(1)
         self.assertEqual(self.world.radio["confirms"], 0)
+        self.assertEqual(self.logged("too late, dropped"), 1)
+
+    def test_the_phones_mode_is_logged_when_it_changes(self):
+        self.play()
+        for _ in range(3):  # said every couple of seconds
+            self.mode("VIEW")
+            self.world.tick(1)
+        self.mode("VIEW", on_monitor=True)
+        self.world.tick(1)
+        self.mode("VIEW", on_monitor=True, mini_game_shown=True)
+        self.world.tick(1)
+        self.mode("AV_OUT")
+        self.world.tick(1)
+        for settings in ("not shown, in the mini-game: hidden", "raised, in the mini-game: hidden",
+                         "raised, in the mini-game: shown"):
+            self.assertEqual(self.logged(f"[TF-CRTV] phone switched to VIEW (on the monitor: {settings})"), 1)
+        self.assertEqual(self.logged("[TF-CRTV] phone switched to AV_OUT"), 1)
+
+    def test_a_press_without_a_raised_crtv_is_logged(self):
+        self.play(raised=False)
+        self.press()
+        self.world.tick(1)
+        self.assertEqual(self.world.radio["confirms"], 0)
+        self.assertEqual(self.logged("[TF-CRTV] phone pressed the D-pad's centre: no raised CRTV, ignored"), 1)
 
 
 class GameSoundTest(ModTest):
-    """The phone plays the CRTV's sound; the game's goes quiet while the phone keeps asking."""
+    """The phone plays the CRTV's sound; the game's goes quiet (tf_native.dll, in its mixer) while the phone keeps
+    asking."""
 
     def setUp(self):
         super().setUp()
         self.audio_file = self.commands_file.with_name("townfall-companion-audio.json")
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        self.enemy = self.world.spawnEnemy("Fearful_1", UE_X + 1000, UE_Y, UE_Z)
-        self.waypoint = self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True)
         self.world.tick(2)
         self.seq = int(time.time() * 1000)
 
-    def ask(self, mute, dialogue=False, video=False):
+    def ask(self, mute):
         self.seq += 100  # the bridge's clock, one request later
-        self.audio_file.write_text(json.dumps({"muteGame": mute, "dialogue": dialogue, "video": video, "seq": self.seq}))
+        self.audio_file.write_text(json.dumps({"muteGame": mute, "seq": self.seq}))
 
-    def volumes(self):
-        radio = self.world.radio
-        return [c["volume"] for c in (self.world.player["SFX_CRTV"], radio["staticAudioComponent"],
-                                      self.enemy["RadioSignalClear"], self.enemy["RadioSignalDist"])]
+    def told(self):
+        """What the DLL was last told (tf_native_sound's packet: 1 quiet, 0 back on), and how often it was told."""
+        magic, mute = struct.unpack("<8sQ", (self.tmp / "townfall-companion-native-sound.bin").read_bytes())
+        self.assertEqual(magic, b"TFSOUND1")
+        return mute, self.world.native["sounds"]
 
-    def video(self):
-        return self.world.crtvWidget["WaypointVideoAudioComponent"]["volume"]
-
-    def talking(self):
-        owner = self.waypoint.GetOwner(self.waypoint)
-        return [owner["ClearSignal"]["volume"], owner["DistortedSignal"]["volume"]]
-
-    def test_silenced_while_the_phone_asks(self):
+    def test_quiet_in_the_game_while_the_phone_asks_and_the_dll_told_again_every_2_s(self):
         self.ask(True)
-        self.world.tick(4)
-        self.assertEqual(self.volumes(), [0] * 4)
-        self.assertTrue(self.telemetry()["audio"]["gameSoundOff"])
-        self.assertEqual(self.logged("[TF-AUDIO] game CRTV sound off, the phone plays it (4 sources)"), 1)
-
-    def test_the_screens_video_sound_stays_unless_the_phone_plays_the_video(self):
-        # Without the converted videos the phone plays none: muting the game's would leave the video silent everywhere.
-        self.ask(True)
-        self.world.tick(4)
-        self.assertEqual(self.video(), 1)
-        self.ask(True, video=True)
-        self.world.tick(1)
-        self.assertEqual(self.video(), 0)
-        self.assertEqual(self.logged("[TF-AUDIO] CRTV video sound off in the game, the phone plays the video"), 1)
-        self.ask(True, video=False)
-        self.world.tick(1)
-        self.assertEqual((self.video(), self.volumes()), (1, [0] * 4))
-        self.assertEqual(self.logged("[TF-AUDIO] CRTV video sound back on in the game"), 1)
-        self.ask(True, video=True)
-        for _ in range(7):
-            self.world.tick(4)  # the phone stopped asking
-        self.assertEqual(self.video(), 1)
-
-    def test_the_waypoints_talking_stays_unless_the_phone_plays_it(self):
-        # The waypoint talks on its ClearSignal and DistortedSignal; muted with the CRTV's sound, the
-        # story's talking would be heard neither on the phone nor in the game.
-        self.ask(True)
-        self.world.tick(4)
-        self.assertEqual(self.talking(), [1, 1])
-        self.ask(True, dialogue=True)
-        self.world.tick(1)
-        self.assertEqual(self.talking(), [0, 0])
-        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue off in the game, the phone plays it"), 1)
-        self.ask(True, dialogue=False)
-        self.world.tick(1)
-        self.assertEqual((self.talking(), self.volumes()), ([1, 1], [0] * 4))
-        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 1)
-
-    def test_a_line_the_phone_took_over_stays_quiet_in_the_game_until_it_ends(self):
-        self.world.speak(self.waypoint, "10c5", 0)
-        self.ask(True, dialogue=True)
-        self.world.tick(1)
-        self.assertEqual(self.talking(), [0, 0])
-        self.ask(True, dialogue=False)  # the phone's copy hiccups, but the game's line is still going
         self.world.tick(2)
-        self.assertEqual(self.talking(), [0, 0])
-        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 0)
-        self.world.speak(self.waypoint, None)  # the line ends
+        self.assertEqual(self.told(), (1, 1))
+        self.assertTrue(self.telemetry()["audio"]["gameSoundOff"])
+        self.assertEqual(self.logged("[TF-AUDIO] game CRTV sound off, the phone plays it"), 1)
+        self.ask(True)  # the phone says it again
         self.world.tick(1)
-        self.assertEqual(self.talking(), [1, 1])
-        self.assertEqual(self.logged("[TF-AUDIO] waypoint dialogue back on in the game"), 1)
-
-    def test_the_game_talks_again_at_once_when_the_phone_stops_playing_sound_mid_line(self):
-        self.world.speak(self.waypoint, "10c5", 0)
-        self.ask(True, dialogue=True)
+        self.assertEqual(self.told(), (1, 1))
         self.world.tick(1)
-        self.assertEqual(self.talking(), [0, 0])
-        self.ask(False)  # AV OUT, or switched off: the phone plays nothing, the game must
-        self.world.tick(1)
-        self.assertEqual(self.talking(), [1, 1])
+        self.assertEqual(self.told(), (1, 2))  # the DLL lets the game's sound back 6 s after its last word
 
     def test_back_on_when_the_phone_stops_asking(self):
-        self.ask(True, dialogue=True, video=True)
+        self.ask(True)
         for _ in range(7):
-            self.world.tick(4)
-        self.assertEqual(self.volumes() + self.talking() + [self.video()], [1] * 7)
+            self.world.tick(1)
+        self.assertEqual(self.told()[0], 0)
         self.assertFalse(self.telemetry()["audio"]["gameSoundOff"])
         self.assertEqual(self.logged("[TF-AUDIO] game CRTV sound back on (the phone stopped asking)"), 1)
 
-    def test_back_on_when_the_phone_says_so(self):
-        self.ask(True, dialogue=True, video=True)
-        self.world.tick(4)
+    def test_back_on_at_once_when_the_phone_says_so(self):
+        self.ask(True)
+        self.world.tick(1)
         self.ask(False)
         self.world.tick(1)
-        self.assertEqual(self.volumes() + self.talking() + [self.video()], [1] * 7)
-
-    def test_a_monster_arriving_meanwhile_is_silenced_too(self):
-        self.ask(True)
-        self.world.tick(4)
-        later = self.world.spawnEnemy("Enraged_2", UE_X - 1000, UE_Y, UE_Z)
-        self.world.tick(4)
-        self.assertEqual((later["RadioSignalClear"]["volume"], later["RadioSignalDist"]["volume"]), (0, 0))
+        self.assertEqual(self.told()[0], 0)
+        self.assertEqual(self.logged("[TF-AUDIO] game CRTV sound back on"), 1)
 
 
 class CutsceneTest(ModTest):
-    """The videos cutscenes show on screens, for the phone to show."""
+    """The cutscene playing: the phone doesn't raise the CRTV over one."""
 
     def setUp(self):
         super().setUp()
@@ -1276,49 +1030,22 @@ class CutsceneTest(ModTest):
         self.assertIsNone(self.cutscene())
         self.assertEqual(self.logged("error"), 0)
 
-    def test_the_bink_players_video_and_time(self):
-        self.world.playCutsceneVideo("bink", "./Movies/Cutscene_Diegetic_Movies/Bink/Cutscene_WatchingZoesSignal_1.bk2", 3.5)
-        self.assertEqual(self.cutscene(), {"video": "Cutscene_Diegetic_Movies/Bink/Cutscene_WatchingZoesSignal_1",
-                                           "videoTime": 3.5, "sequence": None, "sequenceTime": None})
-        self.assertEqual(self.logged("[TF-CUTSCENE] screen video: Cutscene_Diegetic_Movies/Bink/Cutscene_WatchingZoesSignal_1"), 1)
-        self.world.playCutsceneVideo("bink", None)
-        self.assertIsNone(self.cutscene())
-
-    def test_the_media_players_mp4_by_file_url(self):
-        self.world.playCutsceneVideo("media", "file://E:/Game/Content/Movies/Cutscene_Diegetic_Movies/Cutscene_TooLate_Zoe_1.mp4")
-        self.assertEqual(self.cutscene()["video"], "Cutscene_Diegetic_Movies/Cutscene_TooLate_Zoe_1")
-
-    def test_the_cutscene_playing_and_how_far_in(self):
-        sequence = self.world.playSequence("LS_SearchingForSignals", 12.5)
-        self.assertEqual(self.cutscene(), {"video": None, "videoTime": None,
-                                           "sequence": "LS_SearchingForSignals", "sequenceTime": 12.5})
+    def test_the_cutscene_playing(self):
+        sequence = self.world.playSequence("LS_SearchingForSignals")
+        self.assertEqual(self.cutscene(), {"sequence": "LS_SearchingForSignals"})
         self.assertEqual(self.logged("[TF-CUTSCENE] sequence: LS_SearchingForSignals"), 1)
         sequence["playing"] = False
         self.assertIsNone(self.cutscene())
 
     def test_no_lookups_by_path_after_the_level_start(self):
-        # They cost 14-21 ms each in the game; the players are caught as they load instead.
+        # They cost 14-21 ms each in the game; the sequence players are caught as they are made instead.
         self.world.addWaypoint("Clinic", UE_X + 1000, UE_Y, UE_Z, 0.15, True)
         self.world.tick(2)
         before = self.world.staticFindCalls
         self.world.tick(5)
-        self.world.playCutsceneVideo("bink", "./Movies/Cutscene_Diegetic_Movies/Bink/Cutscene_TooLate_Zoe_2.bk2", 1)
-        self.assertEqual(self.cutscene()["video"], "Cutscene_Diegetic_Movies/Bink/Cutscene_TooLate_Zoe_2")
+        self.world.playSequence("LS_TooLate")
+        self.assertEqual(self.cutscene()["sequence"], "LS_TooLate")
         self.assertEqual(self.world.staticFindCalls, before)
-
-    def test_a_freed_player_is_never_used(self):
-        # The main menu's opening tape leaves the Bink player behind; the level change frees it, and a
-        # call on it then crashes the game. With the phone asking for quiet, nothing may touch it.
-        self.world.playCutsceneVideo("bink", "./Movies/Cutscene_Diegetic_Movies/Bink/Cutscene_OpeningTapeContent_Bink.bk2", 1)
-        self.world.tick(1)
-        self.world.freeCutscenePlayer("bink")
-        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
-        audio_file = self.commands_file.with_name("townfall-companion-audio.json")
-        for i in range(3):
-            audio_file.write_text(json.dumps({"muteGame": True, "seq": int(time.time() * 1000) + i}))
-            self.world.tick(4)
-        self.assertEqual(self.world.freedCalls, 0)
-        self.assertIsNone(self.telemetry()["cutscene"])
 
 
 class NoRadioRequestsTest(ModTest):
@@ -1329,10 +1056,11 @@ class NoRadioRequestsTest(ModTest):
         commands.write_text(json.dumps({"active": True, "frequency": 0.5, "seq": 100}))  # left over from an earlier session
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.world.tick(3)
+        self.mode("VIEW", on_monitor=True)
         commands.write_text(json.dumps({"active": True, "animate": True, "frequency": 0.5, "seq": 101}))
         self.world.tick(1)
         self.assertTrue(self.world.radio["active"])
-        commands.write_text(json.dumps({"active": False, "animate": True, "frequency": 0.5, "seq": 102}))
+        self.mode("AV_OUT")
         self.world.tick(2)
         self.assertFalse(self.world.radio["active"])
         self.assertEqual(self.logged("RequestRadioON/OFF failed"), 1)
@@ -1359,6 +1087,237 @@ class MissingEnemyClassTest(ModTest):
         self.world.enterGameplay(UE_X, UE_Y, UE_Z)
         self.world.tick(1)
         self.assertEqual(self.enemy_ids(), ["Fearful_1"])
+
+
+class NativeTest(ModTest):
+    """tf_native.lua tells tf_native.dll (faked here: its calls are counted) which texture is the CRTV's screen."""
+
+    def setUp(self):
+        super().setUp()
+        self.beat(phones=1, fps=15)
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.radio["active"] = True
+        self.world.tick(1)
+
+    def source(self):
+        magic, texture, radio, fps, width, _ = struct.unpack(
+            "<8sQQIIQ", (self.tmp / "townfall-companion-native-source.bin").read_bytes())
+        self.assertEqual(magic, b"TFNATV03")
+        self.assertEqual(radio, self.world.radio["address"] if self.world.radio["active"] else 0)
+        return texture, fps, width
+
+    def status(self, **fields):
+        """The DLL's state, as it writes it."""
+        (self.tmp / "townfall-companion-native.json").write_text(json.dumps(
+            {"status": "rhi-source-identified", "captureStatus": "streaming", **fields}))
+
+    def test_the_raised_crtvs_screen_texture_goes_to_the_dll(self):
+        self.assertEqual(self.source(), (self.world.screenTexture["address"], 15, 640))
+        self.assertEqual(self.world.native["inits"], 1)
+        self.assertGreater(self.world.native["updates"], 0)
+        self.assertEqual(self.logged("[TF-NATIVE] tf_native.dll loaded"), 1)
+
+    def test_nothing_while_the_crtv_is_down_or_no_phone_watches(self):
+        self.world.radio["active"] = False
+        self.world.tick(1)
+        self.assertEqual(self.source()[0], 0)
+        self.world.radio["active"] = True
+        self.beat(phones=0)
+        self.world.tick(1)
+        self.assertEqual(self.source()[:2], (0, 0))  # the DLL stops copying
+
+    def test_a_texture_drawn_from_another_widget_is_not_taken(self):
+        self.world.radar["Widget"] = self.world.radio  # valid, but not the CRTV's screen widget
+        self.world.tick(1)
+        self.assertEqual(self.source()[0], 0)
+
+    def test_the_dlls_state_is_logged_when_it_changes(self):
+        self.status()
+        self.world.tick(3)
+        self.assertEqual(self.logged("[TF-NATIVE] rhi-source-identified, capture streaming"), 1)
+
+    def test_the_mini_game_goes_to_the_phone(self):
+        self.assertIsNone(self.telemetry()["crtv"]["miniGame"])
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 2})
+        self.world.tick(2)  # read by the native loop, sent with the next sample
+        self.assertEqual(self.telemetry()["crtv"]["miniGame"], {"mode": 1, "stage": 2})
+
+    def raise_by_phone(self, animate):
+        self.commands_file.write_text(json.dumps({"active": True, "animate": animate, "frequency": 0.3,
+                                                  "seq": int(time.time() * 1000)}))
+        self.world.tick(1)
+
+    MINI_GAME = {"active": 1, "fineTuning": 1, "mode": 1, "stage": 0}
+    NO_MINI_GAME = {"active": 1, "fineTuning": 0, "mode": 0, "stage": 0}
+
+    def test_in_view_by_default_the_crtv_and_the_hands_are_hidden_for_the_mini_game(self):
+        # However the CRTV was raised: here with the radio button (setUp).
+        prop, hands = self.world.radio["SpawnedRadio"], self.world.player["Mesh1P"]
+        for was in (False, True):  # afterwards as the game had them
+            with self.subTest(was_hidden=was):
+                prop["bHidden"] = hands["bHiddenInGame"] = was
+                self.mode("VIEW")
+                self.status(radio=self.MINI_GAME)
+                self.world.tick(2)
+                self.assertTrue(prop["bHidden"])
+                self.assertTrue(hands["bHiddenInGame"])
+                self.assertFalse(hands["propagated"])  # the hands alone: what hangs on them keeps its own state
+                self.mode("VIEW")
+                self.status(radio=self.NO_MINI_GAME)
+                self.world.tick(2)
+                self.assertEqual((prop["bHidden"], hands["bHiddenInGame"]), (was, was))
+        self.assertEqual(self.logged("[TF-CRTV] the CRTV and the hands holding it are hidden for the mini-game "
+                                     "(the phone's setting)"), 2)
+        self.assertEqual(self.logged("[TF-CRTV] the CRTV is back as it was"), 2)
+
+    def test_shown_in_the_mini_game_or_in_av_out_the_crtv_and_the_hands_stay_in_view(self):
+        for selector, shown in (("VIEW", True), ("AV_OUT", False)):
+            with self.subTest(selector=selector):
+                self.mode(selector, mini_game_shown=shown)
+                self.status(radio=self.MINI_GAME)
+                self.world.tick(2)
+                self.assertFalse(self.world.radio["SpawnedRadio"]["bHidden"])
+                self.assertFalse(self.world.player["Mesh1P"]["bHiddenInGame"])
+
+    def test_the_mini_game_setting_is_its_own(self):
+        self.mode("VIEW", on_monitor=True)  # raised on the monitor, still hidden in the mini-game
+        self.status(radio=self.MINI_GAME)
+        self.world.tick(2)
+        self.assertTrue(self.world.radio["SpawnedRadio"]["bHidden"])
+
+    def test_the_phones_setting_and_mode_show_or_hide_the_crtv_in_the_mini_game_at_once(self):
+        prop = self.world.radio["SpawnedRadio"]
+        self.mode("VIEW")
+        self.status(radio=self.MINI_GAME)
+        self.world.tick(2)
+        for selector, shown, hidden in (("VIEW", True, False), ("VIEW", False, True), ("AV_OUT", False, False)):
+            with self.subTest(selector=selector, shown=shown):
+                self.mode(selector, mini_game_shown=shown)
+                self.world.tick(1)
+                self.assertIs(prop["bHidden"], hidden)
+
+    def test_a_phone_gone_quiet_leaves_the_crtv_and_the_hands_as_the_game_has_them(self):
+        # Switched off, out of Wi-Fi, the page closed without a word: the phone's settings no longer count.
+        prop, hands = self.world.radio["SpawnedRadio"], self.world.player["Mesh1P"]
+        self.mode("VIEW")
+        self.status(radio=self.MINI_GAME)
+        self.world.tick(2)
+        self.assertTrue(prop["bHidden"] and hands["bHiddenInGame"])
+        for _ in range(4):
+            self.world.tick(1)
+        self.assertTrue(prop["bHidden"], "a moment's silence is nothing")
+        for _ in range(2):
+            self.world.tick(1)
+        self.assertEqual((prop["bHidden"], hands["bHiddenInGame"]), (False, False))  # mini-game still running
+        self.assertEqual(self.logged("[TF-CRTV] the CRTV is back as it was"), 1)
+
+    def test_the_way_the_phone_switched_it_on_changes_after_the_mini_game_not_in_it(self):
+        self.world.radio["active"] = False
+        self.mode("VIEW")
+        self.raise_by_phone(animate=False)  # silently
+        self.status(radio=self.MINI_GAME)
+        self.world.tick(2)
+        self.mode("VIEW", on_monitor=True)  # now to show on the monitor: the mini-game goes on
+        self.world.tick(1)
+        self.assertTrue(self.world.radio["active"])
+        self.mode("VIEW", on_monitor=True)
+        self.status(radio=self.NO_MINI_GAME)
+        self.world.tick(2)
+        self.assertFalse(self.world.radio["active"])  # after it: off, for the phone to raise it with the animation
+
+    def test_the_game_sound_tap_logs_its_state_the_buses_once_and_which_carry_sound(self):
+        (self.tmp / "townfall-companion-native-buses.txt").write_text(
+            "bus:/\nbus:/PreMaster/SFX/CRTV (tapped)\nbus:/PreMaster/Dialogue (tapped)\n")
+        self.status(audio=1, audioRate=0, audioBuses=0, audioLevels="")
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-AUDIO] game sound tap: waiting for the CRTV's bus"), 1)
+        self.assertEqual(self.logged("FMOD buses"), 0, "none listed yet")
+        self.status(audio=3, audioRate=48000, audioBuses=3, audioLevels="CRTV 0.0000/0.0000, Dialogue 0.0000/0.0000")
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-AUDIO] game sound tap: listening (48000 Hz)"), 1)
+        self.assertEqual(self.logged("[TF-AUDIO] FMOD buses (3): bus:/, bus:/PreMaster/SFX/CRTV (tapped), "
+                                     "bus:/PreMaster/Dialogue (tapped)"), 1)
+        self.status(audio=3, audioRate=48000, audioBuses=3, audioLevels="CRTV 0.1200/0.5000, Dialogue 0.0004/0.0020")
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-AUDIO] levels"), 0, "the levels are in the DLL's status, not the log")
+        self.assertEqual(self.logged("FMOD buses"), 1)
+
+    def test_the_mini_games_mode_and_stage_are_logged_as_they_change(self):
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 0, "stage": 0})
+        self.world.tick(2)
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 2})
+        self.world.tick(2)
+        self.status(radio={"active": 1, "fineTuning": 0, "mode": 0, "stage": 0})
+        self.world.tick(2)
+        for line in ("mini-game: standard, bar", "mini-game: advanced, stabilise image", "mini-game: off"):
+            self.assertEqual(self.logged("[TF-NATIVE] " + line), 1, line)
+
+    def test_the_centre_stores_the_signal_when_the_advanced_mini_game_waits_for_it(self):
+        press = self.tmp / "townfall-companion-confirm.json"
+        release = self.tmp / "townfall-companion-release.json"
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 4})
+        self.world.tick(1)
+        press.write_text(json.dumps({"seq": int(time.time() * 1000)}))
+        self.world.tick(1)
+        release.write_text(json.dumps({"seq": int(time.time() * 1000)}))
+        self.world.tick(1)
+        radio = self.world.radio
+        self.assertEqual((radio["stores"], radio["storeReleases"], radio["confirms"]), (1, 1, 0))
+        self.assertEqual(self.logged("[TF-CRTV] phone pressed the D-pad's centre: store signal"), 1)
+        self.assertEqual(self.logged("[TF-CRTV] phone let go of the D-pad's centre: store signal released"), 1)
+
+    def test_the_image_stages_are_logged_for_comparing_the_stick_and_the_phone(self):
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 0})
+        self.world.tick(2)
+        self.assertEqual(self.logged("[TF-ALIGN]"), 0)  # not in an image stage
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 2}, alignmentResult=1, alignmentCalls=5)
+        self.world.tick(3)
+        self.assertEqual(self.logged("[TF-ALIGN] stabilise: image at ?, ?;"), 1)  # once while nothing changes
+        self.assertEqual(self.logged("phone commands 0, moves applied 5, last applied"), 1)
+
+    def test_the_phones_look_goes_to_the_dll_as_a_packet(self):
+        look = self.tmp / "townfall-companion-look.json"
+        seq = int(time.time() * 1000)
+        look.write_text(json.dumps({"on": False, "yaw": 0, "pitch": 0, "seq": seq}))
+        self.world.tick(1)
+        look.write_text(json.dumps({"on": True, "yaw": -42.5, "pitch": 12.5, "seq": seq + 50}))
+        self.world.tick(1)
+        self.assertEqual(self.world.native["looks"], 2)  # the file came after the mod started: both count
+        packet = struct.unpack("<8sddQQ", (self.tmp / "townfall-companion-native-look.bin").read_bytes())
+        self.assertEqual(packet, (b"TFLOOK04", -42.5, 12.5, 1, seq + 50))
+        self.assertEqual(self.logged("[TF-CRTV] the CRTV looks as the character holds it"), 1)
+        self.assertEqual(self.logged("[TF-CRTV] the CRTV looks where the phone points"), 1)
+
+    def test_the_image_goes_where_the_phone_points_from_where_it_was_as_the_phone_took_over(self):
+        self.status(radio={"active": 1, "fineTuning": 1, "mode": 1, "stage": 2})
+        self.world.radio["AdvancedTuningMotionControl_Current"] = types.SimpleNamespace(X=0.2, Y=-0.1)
+        align = self.tmp / "townfall-companion-align.json"
+        seq = int(time.time() * 1000)
+        pose = {"roll": 10, "pitch": 5, "dpu": 20, "session": 3, "state": "on"}
+        align.write_text(json.dumps({**pose, "seq": seq}))
+        self.world.tick(1)
+        self.assertEqual(self.world.native["aligns"], 0, "the phone's pose and the image's position: the anchor")
+        align.write_text(json.dumps({**pose, "roll": 14, "pitch": 3, "seq": seq + 50}))
+        self.world.tick(1)
+        self.assertEqual(self.world.native["aligns"], 1)
+        magic, radio, x, y, sent = struct.unpack("<8sQddQ", (self.tmp / "townfall-companion-native-align.bin").read_bytes())
+        self.assertEqual((magic, radio, sent), (b"TFALIGN1", self.world.radio["address"], seq + 50))
+        self.assertAlmostEqual(x, 4 / 20)  # leaned 4 degrees right: the image there, from where it is now
+        self.assertAlmostEqual(y, -2 / 20)  # the top 2 degrees away from you: the game's Y goes down
+        align.write_text(json.dumps({**pose, "state": "centre held", "seq": seq + 100}))
+        self.world.tick(1)
+        self.assertEqual(self.logged("[TF-ALIGN] phone tilt: on"), 1)  # the first said it, the second the same
+        self.assertEqual(self.logged("[TF-ALIGN] phone tilt: centre held"), 1)  # when and why it stopped
+
+
+class NoNativeTest(ModTest):
+    options = {"noNative": True}
+
+    def test_without_the_dll_the_mod_runs_and_says_so_once(self):
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+        self.world.tick(3)
+        self.assertEqual(self.logged("[TF-NATIVE] tf_native.dll not loaded"), 1)
+        self.assertEqual(self.telemetry()["player"]["alive"], True)
 
 
 class NoTempDirTest(ModTest):

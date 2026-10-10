@@ -4,8 +4,6 @@ export function norm360(v) { return ((v % 360) + 360) % 360; }
 export function norm180(v) { const n = norm360(v); return n > 180 ? n - 360 : n; }
 export function rad(v) { return v * Math.PI / 180; }
 export function clamp01(v) { return Math.max(0, Math.min(1, Number(v) || 0)); }
-// A steady pseudo-random 0..1 for n: the same figure flickers the same way every time.
-export function hash(n) { const v = Math.sin(n) * 43758.5453; return v - Math.floor(v); }
 
 // Phone frame: +Y = north/0deg, +X = east/90deg, bearings clockwise.
 export function worldBearing(dx, dy) {
@@ -13,15 +11,16 @@ export function worldBearing(dx, dy) {
 }
 
 // The heading (degrees, clockwise) of the way the phone points, from its orientation angles (W3C
-// DeviceOrientation, intrinsic Z-X'-Y''). Held up like the CRTV that is the back of the phone, and
-// tilting it up or down leaves it be; alpha alone swings wildly once the phone stands upright. Lying
-// flat the back points at the floor, so then the top edge counts.
+// DeviceOrientation, intrinsic Z-X'-Y''). Held up like the CRTV that is the back of the phone; alpha alone
+// swings wildly once the phone stands upright. The more the back points up or down, the more the top edge
+// counts, the way it then points away from you: lying face up the top edge, tilted back until the back looks at
+// the sky the bottom edge. So the heading stays put however far the phone is tilted, without a jump.
 export function deviceHeading(alpha, beta, gamma) {
   const a = rad(alpha), b = rad(beta), g = rad(gamma);
   const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
-  let x = -ca * sg - sa * sb * cg, y = -sa * sg + ca * sb * cg; // the back, in the earth's x (east) / y (north)
-  if (Math.hypot(x, y) < 0.35) { x = -sa * cb; y = ca * cb; }  // nearly flat: the top edge
-  return worldBearing(x, y);
+  const backX = -ca * sg - sa * sb * cg, backY = -sa * sg + ca * sb * cg, backUp = -cb * cg; // in east, north, up
+  const topX = -sa * cb, topY = ca * cb;
+  return worldBearing(backX - backUp * topX, backY - backUp * topY);
 }
 
 // How far up the back of the phone points (degrees, down negative), from the same angles: held upright
@@ -33,7 +32,7 @@ export function devicePitch(beta, gamma) {
 
 // The game's clock (the telemetry's `t`, seconds) on the phone's (performance.now(), ms). Samples reach
 // the phone 50-200 ms late and unevenly; the quickest one so far was the least late, so its offset is
-// kept. A clock that goes back (the game restarted, or the demo gave way to it) starts over.
+// kept. A clock that goes back (the game restarted) starts over.
 export function createGameClock() {
   let offset = null, last = -Infinity;
   return {
@@ -47,7 +46,7 @@ export function createGameClock() {
   };
 }
 
-// Whether a time the game reports (how far into a video or a cutscene) stands still, as it does in the
+// Whether a time the game reports (its world clock, how far into a line) stands still, as it does in the
 // game's pause menu: the same value in samples at least `holdMs` apart (the mod samples every 100 ms).
 // `at` is when the game read it, on the phone's clock: the telemetry's clock runs on through a pause.
 export function watchStillTime(holdMs = 150) {
@@ -70,15 +69,20 @@ export function watchStillTime(holdMs = 150) {
   };
 }
 
-// To the bridge; a lost one is simply sent again on the next change. keepalive lets the last one
-// (handing the game back) still go out while the page closes.
+// To the bridge; a lost one is simply sent again on the next change. One that gets no answer is given up after
+// REQUEST_TIMEOUT_MS: hanging on (Wi-Fi drops one now and then), it would keep one of the few connections the browser
+// allows per address, and with all of them stuck nothing more goes out. The short answer is read whole, so the
+// connection is free for the next one. While the page is hidden or closing, keepalive lets the last one (handing
+// the game back) still go out. Resolves to the response, or undefined if there was none.
+const REQUEST_TIMEOUT_MS = 2000;
 function postJson(path, body) {
   return fetch(path, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
-    keepalive: true,
-  }).catch(() => {});
+    keepalive: globalThis.document?.visibilityState === "hidden",
+    signal: AbortSignal.timeout?.(REQUEST_TIMEOUT_MS),
+  }).then(async (response) => { await response.arrayBuffer(); return response; }).catch(() => {});
 }
 
 export const postControl = (body) => postJson("/api/control", body);

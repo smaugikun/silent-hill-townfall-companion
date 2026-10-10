@@ -7,13 +7,13 @@
   <title>Townfall Companion</title>
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/crtv/layers.css" />
+  <link rel="stylesheet" href="/crtv/dpad.css" />
 </head>
 <body>
   <!-- The CRTV, stacked from the PSD's layers (static/crtv, placed by the generated layers.css): the
        picture under the CRT's face, then the scale strip with the stations and the needle on it, the
        bezel framing them, the buttons, the Panel glass on top, and invisible touch areas over the controls. -->
   <main id="crtv" class="crtv" aria-label="CRTV">
-    <video id="clip" class="screen clip" muted loop playsinline preload="auto" disablepictureinpicture disableremoteplayback></video>
     <canvas id="screen" class="screen" width="650" height="430"></canvas>
     <div id="screenMessage" class="screen screen-text"></div>
     <div id="osd" class="screen screen-text osd"></div>
@@ -29,12 +29,19 @@
     <img class="part bezel" src="/crtv/bezel.png" alt="" />
     <img id="partTuneUp" class="part tune-up" src="/crtv/tune-up.png" alt="" />
     <img id="partTuneDown" class="part tune-down" src="/crtv/tune-down.png" alt="" />
-    <img id="partKeyF" class="part key-f" src="/crtv/key-f.png" alt="" />
+    <div id="dpad" class="dpad" role="group" aria-label="Fine-tune directional pad">
+      <img class="dpad-base" src="/crtv/dpad.png" alt="" />
+      <img id="partDpadCenter" class="dpad-cap cap-center" src="/crtv/dpad-center.png" alt="" />
+      <button id="btnDpadUp" class="dpad-hit hit-up" aria-label="Fine-tune up"></button>
+      <button id="btnDpadDown" class="dpad-hit hit-down" aria-label="Fine-tune down"></button>
+      <button id="btnDpadLeft" class="dpad-hit hit-left" aria-label="Fine-tune left"></button>
+      <button id="btnDpadRight" class="dpad-hit hit-right" aria-label="Fine-tune right"></button>
+      <button id="btnDpadCenter" class="dpad-hit hit-center" aria-label="Fine-tune confirm"></button>
+    </div>
     <img class="part panel" src="/crtv/panel.png" alt="" />
     <button id="btnView" class="hotspot view" aria-label="AV OUT / VIEW selector"></button>
     <button id="btnTuneDown" class="hotspot down" aria-label="Tune down"></button>
     <button id="btnTuneUp" class="hotspot up" aria-label="Tune up"></button>
-    <button id="btnKeyF" class="hotspot key" aria-label="F: fine-tune press"></button>
   </main>
 
   <button id="settingsOpen" class="cog" aria-label="Settings">⚙</button>
@@ -49,24 +56,33 @@
       </header>
       <p class="note">
         VIEW: the CRTV is on the phone. Turn the phone to look around; ⌖ lines it up with your character.
-        AV OUT: the CRTV is on the PC, with all its sound; the phone shows its picture or stays dark. In both,
-        the TUNING buttons and F work on the game's CRTV.
+        AV OUT: the CRTV is on the PC, with its picture and sound; the phone's screen stays dark. In both, the
+        TUNING buttons and the D-pad work on the game's CRTV.
       </p>
 
       <h3>Device</h3>
       <label class="row"><span>In VIEW, show the game's CRTV on the monitor</span><input id="setRaise" type="checkbox" /></label>
       <p class="note">
-        In VIEW the game's CRTV is on either way, so its voices, subtitles and the fine-tune mini-game come to the
-        phone. On: your character raises it as with L1 on a controller, and you see it on the monitor. Off: it
-        works without showing on the monitor. Switching it takes effect at once.
+        In VIEW the game's CRTV is on either way, so its voices, subtitles and fine tuning come to the
+        phone. On: your character raises it, as with the radio button on your keyboard or controller, and you see it
+        on the monitor. Off: it works without showing on the monitor. Switching it takes effect at once.
+      </p>
+      <label class="row"><span>In VIEW, show the game's CRTV during fine tuning</span><input id="setMiniGame" type="checkbox" /></label>
+      <p class="note">
+        Fine tuning raises the CRTV in both hands. Off: during it, the monitor doesn't show the CRTV or the hands
+        holding it, however it was raised. Switching it takes effect at once.
       </p>
       <label class="row"><span>The phone steers your character</span><input id="setSync" type="checkbox" /></label>
       <p class="note">
-        In VIEW, with the phone in your hand: turn it and your character turns the same way (tilting only moves
-        the CRTV's own view). Not while it lies flat or stands still.
+        In VIEW, with the phone in your hand: turn or tilt it and your character turns or looks up and down the
+        same way. Not while it lies flat or stands still, or during fine tuning.
       </p>
+      <label class="row"><span>Fine tuning tilt sensitivity</span><input id="setAlignSensitivity" type="range" min="1" max="10" step="1" /></label>
+      <p class="note">In VIEW, in the image stages of fine tuning, leaning and tilting the phone moves the
+        picture as the mouse or the controller does. Higher moves it further for the same turn.</p>
       <label class="row"><span>Auto pickup</span><input id="setAutoPickup" type="checkbox" /></label>
-      <p class="note">Picking the phone up, from the table or a stand, switches to VIEW; laying it flat to AV OUT.</p>
+      <p class="note">Picking the phone up, from the table or a stand, switches to VIEW; laying it flat to AV OUT.
+        Not during fine tuning.</p>
       <div class="row">
         <span>Set on a stand</span>
         <span class="choice">
@@ -77,17 +93,10 @@
       <p class="note">With Auto pickup: what the phone switches to once it stands still on a stand.</p>
 
       <h3>Picture and sound</h3>
-      <div class="row stack">
-        <span>In AV OUT the phone shows</span>
-        <span class="choice">
-          <label><input type="radio" name="avOut" value="off" />Nothing</label>
-          <label><input type="radio" name="avOut" value="picture" />Picture</label>
-        </span>
-      </div>
       <label class="row"><span>In VIEW the phone plays the sound</span><input id="setSoundInView" type="checkbox" /></label>
       <p class="note">The CRTV's sound and the voices play on the phone.</p>
       <label class="row"><span>Silence it in the game</span><input id="setSoundMuteGame" type="checkbox" /></label>
-      <p class="note">What the phone plays, the PC doesn't. A few sounds the game won't let go of stay on the PC only.</p>
+      <p class="note">What the phone plays, the PC doesn't.</p>
       <label class="row"><span>Phone volume</span><input id="setSoundVolume" type="range" min="0" max="100" step="5" /></label>
       <p class="note">Only the phone's own sound. At 0 the phone is silent and the game plays its sound again.</p>
 
@@ -108,33 +117,24 @@
       <button id="testVibration" class="action">Test vibration</button>
       <p id="vibrationNote" class="note"></p>
 
-      <h3>Bug reports</h3>
-      <label class="row"><span>Record the CRTV screen</span><input id="setRecord" type="checkbox" /></label>
-      <p class="note">
-        While this is on, the mod writes what the game's CRTV screen does (every mini-game, the radio's numbers, your
-        presses) to <b>townfall-ui-recording.txt</b> in the mod's folder (TownfallCompanion). Switch it on, play the
-        CRTV, switch it off, and send the file with a bug report. It costs a little game speed while on, and stops by
-        itself after 15 minutes or when this page closes.
-      </p>
-
       <h3>Status</h3>
       <dl class="status">
-        <dt>Bridge</dt><dd id="stBridge">—</dd>
+        <dt>Companion</dt><dd id="stBridge">—</dd>
         <dt>Game</dt><dd id="stGame">—</dd>
         <dt>CRTV</dt><dd id="stCrtv">—</dd>
+        <dt>Game's screen</dt><dd id="stStream">—</dd>
+        <dt>Fine tuning tilt</dt><dd id="stTilt">—</dd>
         <dt>Rotation sensor</dt><dd id="stSensor">—</dd>
         <dt>Pickup</dt><dd id="stPickup">—</dd>
         <dt>Heading</dt><dd id="stHeading">—</dd>
         <dt>Screen stays on</dt><dd id="stWake">—</dd>
         <dt>Sound</dt><dd id="stSound">—</dd>
         <dt>Cutscene</dt><dd id="stCutscene">—</dd>
-        <dt>Talking</dt><dd id="stTalk">—</dd>
-        <dt>Recording</dt><dd id="stRecord">—</dd>
       </dl>
       <p id="secureHint" class="note hint" hidden>
         Turning the phone, Auto pickup and keeping the screen on need a secure page: in Chrome, open
         chrome://flags, enable "Insecure origins treated as secure" with this page's address, and relaunch
-        Chrome (docs\PHONE_SETUP.md in the mod's folder explains it).
+        Chrome (docs\PHONE_SETUP.md in the mod's download explains it).
       </p>
     </section>
   </div>

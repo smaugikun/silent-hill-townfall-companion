@@ -4,7 +4,8 @@
 -- waypoints (tf_signals) and the cutscene playing (tf_cutscene), and writes them to
 -- %TEMP%\townfall-companion-telemetry.json for the companion's bridge (UE4SS Lua has no sockets).
 -- The phone's commands come back through files too (tf_commands); tf_audio quiets the game's CRTV
--- sound while the phone plays it. Two small heartbeat files tell the companion and the mod about each other:
+-- sound while the phone plays it; tf_native (a DLL) copies the CRTV's screen for the phone while one
+-- watches, and moves the mini-game's alignment image (tf_alignment). Two small heartbeat files tell the companion and the mod about each other:
 -- the companion's (how many phones have the page open: the mod reads the game only while one is, and idles
 -- otherwise) and the game's (every second: the companion closes a minute after it stops).
 
@@ -20,12 +21,14 @@ local signals = require("tf_signals")
 local cutscene = require("tf_cutscene")
 local audio = require("tf_audio")
 local commands = require("tf_commands")
-local record = require("tf_record")
+local native = require("tf_native")
+local alignment = require("tf_alignment")
 
 local SAMPLE_MS = 100  -- telemetry rate
 local COMMAND_MS = 50  -- phone commands; steering needs the quick turnaround
 local UPDATE_MS = 1000 -- player lookup, enemy range checks and state logs
-local AUDIO_MS = 250   -- silencing the game's CRTV sound again where it restarted
+local AUDIO_MS = 250   -- the game's CRTV sound back once the phone stops asking for it quiet
+local NATIVE_MS = 500  -- which texture the CRTV's screen is, for tf_native.dll
 
 local tempDir = os.getenv("TEMP") or os.getenv("TMP")
 local telemetryPath = tempDir and (tempDir .. "\\townfall-companion-telemetry.json")
@@ -33,29 +36,40 @@ local bridgeBeatPath = tempDir and (tempDir .. "\\townfall-companion-bridge.json
 local gameBeatPath = tempDir and (tempDir .. "\\townfall-companion-game.json")
 if not telemetryPath then log("TF-COMPANION", "no TEMP directory, telemetry disabled") end
 commands.init(tempDir)
+native.init(tempDir)
 
--- Whether a companion is running and how many phones have the page open, from its heartbeat.
-local bridgeUp, phoneHere = false, false
+-- From the companion's heartbeat: whether it runs with a phone on the page, and how often and how wide the phone
+-- wants the CRTV's screen. The file stays open: the companion rewrites it in place every second, and a read in the
+-- middle of that keeps what the one before said.
+local phoneHere = false
+local bridgeBeat
+local lastBridge = { false, 0, nil }
 local function readBridge()
-    local f = bridgeBeatPath and io.open(bridgeBeatPath, "r")
-    if not f then return false, false end
-    local text = f:read("a") or ""
-    f:close()
+    bridgeBeat = bridgeBeat or (bridgeBeatPath and io.open(bridgeBeatPath, "r"))
+    if not bridgeBeat then return false, 0, nil end
+    bridgeBeat:seek("set", 0)
+    local text = bridgeBeat:read("a") or ""
     local time = tonumber(text:match('"time"%s*:%s*(%d+)'))
+    if not (time and text:find("}", 1, true)) then return lastBridge[1], lastBridge[2], lastBridge[3] end
     local phones = tonumber(text:match('"phones"%s*:%s*(%d+)')) or 0
-    local fresh = time ~= nil and math.abs(os.time() - time) <= 5
-    return fresh, fresh and phones > 0
+    lastBridge = { math.abs(os.time() - time) <= 5 and phones > 0, tonumber(text:match('"nativeFps"%s*:%s*(%d+)')) or 0,
+                   tonumber(text:match('"nativeWidth"%s*:%s*(%d+)')) }
+    return lastBridge[1], lastBridge[2], lastBridge[3]
 end
 
--- Every second: says the game runs (the companion closes once it stops), and whether a companion is
--- running and a phone has its page open.
+-- Every second: says the game runs (the companion closes once it stops), and whether a phone has the page open. The
+-- heartbeat file stays open and is rewritten in place (its length stays): opening a file waits for the virus scanner.
+local gameBeat
 local function presence()
-    local f = gameBeatPath and io.open(gameBeatPath, "w")
-    if f then
-        f:write(string.format('{"time":%d}', os.time()))
-        f:close()
+    gameBeat = gameBeat or (gameBeatPath and io.open(gameBeatPath, "w+b"))
+    if gameBeat then
+        gameBeat:seek("set", 0)
+        gameBeat:write(string.format('{"time":%d}', os.time()))
+        gameBeat:flush()
     end
-    bridgeUp, phoneHere = readBridge()
+    local fps, width
+    phoneHere, fps, width = readBridge()
+    native.request(phoneHere and fps or 0, width)
 end
 
 local function whenPhone(fn)
@@ -77,6 +91,9 @@ end
 -- mustn't take the player's position, or the other parts, down with it.
 local KEEPALIVE_S = 0.5
 local lastBody, lastWrite = nil, -math.huge
+-- The telemetry file stays open and is rewritten in place (opening one waits for the virus scanner): spaces pad a
+-- shorter text to the length before, so nothing of the last one is left after it.
+local telemetryFile, telemetryLength = nil, 0
 
 local function sample()
     if not telemetryPath or not player.isTracking() then return end
@@ -87,25 +104,29 @@ local function sample()
     local crtvJson = radio and optional("crtv json", "TF-CRTV", function() return crtv.json(radio) end, "null") or "null"
     local cutsceneJson = optional("cutscene read", "TF-CUTSCENE", cutscene.json, "null")
     local worldTime = common.tryNumber(function() return player.pawn():GetGameTimeSinceCreation() end)
-    local pitch = common.tryNumber(player.pitch) or 0
     local alive = player.isAlive()
     logChange("player life", "TF-PLAYER", alive and "alive" or "dead")
 
     -- Nothing but the clocks changed: the file is rewritten only every KEEPALIVE_S (the companion calls a
     -- file older than 2 s the game having left), not ten times a second.
-    local body = string.format('"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"pitch":%.1f,"alive":%s},"enemies":[%s],'
-        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s},"recording":%s}',
-        x, y, yaw, pitch, tostring(alive), enemyJson, signalJson, crtvJson, cutsceneJson, tostring(audio.isOff()),
-        tostring(record.isOn()))
+    local body = string.format('"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"alive":%s},"enemies":[%s],'
+        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s}}',
+        x, y, yaw, tostring(alive), enemyJson, signalJson, crtvJson, cutsceneJson, tostring(audio.isOff()))
     local now = os.clock()
     if body == lastBody and now - lastWrite < KEEPALIVE_S then return end
-    local f, err = io.open(telemetryPath, "w")
-    if not f then return logChange("telemetry", "TF-COMPANION", "cannot write telemetry: " .. tostring(err)) end
-    -- t: when this was read, on the game's clock (s), however late it reaches the phone: the phone
-    -- keeps speech in step and runs the fine-tune box by it. world: the world's own clock (s, the player's
-    -- time in it), which stands still while the game is paused: the phone then holds everything too.
-    f:write(string.format('{"t":%.3f,"world":%s,', now, common.jsonNumber(worldTime, "%.2f")), body)
-    f:close()
+    local err
+    if not telemetryFile then telemetryFile, err = io.open(telemetryPath, "w+b") end
+    if not telemetryFile then
+        return logChange("telemetry", "TF-COMPANION", "cannot write telemetry: " .. tostring(err))
+    end
+    -- t: when this was read, on the game's clock (s), however late it reaches the phone: the phone tells a new sample
+    -- from one it has by it, and times the world's clock with it. world: the world's own clock (s, the player's time
+    -- in it), which stands still while the game is paused: the phone then holds everything too.
+    local text = string.format('{"t":%.3f,"world":%s,', now, common.jsonNumber(worldTime, "%.2f")) .. body
+    telemetryFile:seek("set", 0)
+    telemetryFile:write(text, string.rep(" ", telemetryLength - #text))
+    telemetryFile:flush()
+    telemetryLength = math.max(telemetryLength, #text)
     lastBody, lastWrite = body, now
     logChange("telemetry", "TF-COMPANION", "telemetry -> " .. telemetryPath)
 end
@@ -164,7 +185,12 @@ LoopInGameThreadWithDelay(UPDATE_MS, guarded("crtv update", whenPhone(crtv.updat
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("signal update", whenPhone(signals.update)))
 LoopInGameThreadWithDelay(UPDATE_MS, guarded("cutscene update", whenPhone(cutscene.update)))
 LoopInGameThreadWithDelay(SAMPLE_MS, guarded("sample", whenPhone(sample)))
-LoopInGameThreadWithDelay(SAMPLE_MS, guarded("record", record.update)) -- nothing while it is off
+LoopInGameThreadWithDelay(NATIVE_MS, guarded("native", function()
+    native.update()
+    crtv.hideInMiniGame() -- by the mini-game state native.update just read
+    alignment.logImageStage()
+    alignment.watchPhone()
+end))
 LoopInGameThreadWithDelay(COMMAND_MS, guarded("phone command", commands.poll))
 LoopInGameThreadWithDelay(AUDIO_MS, guarded("audio", audio.update))
 LoopInGameThreadWithDelay(UPDATE_MS, reportPerf)

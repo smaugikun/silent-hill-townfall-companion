@@ -71,34 +71,6 @@ function M.str(value)
     return value and value:ToString() or nil
 end
 
--- The CRTV's videos (enemies', waypoints', the screen's) as the path under Content/Movies/CRTV_Movies
--- without extension, e.g. "Bink/Shipping/Mov_CRTV_Clinic", from the game's URL for it.
-M.CRTV_VIDEO = "CRTV_Movies/(.+)%.bk2$"
-
--- A video URL from the game, with forward slashes, matched against `pattern` (a Lua pattern, or a function of the
--- path); nil if it doesn't match.
-function M.videoPath(url, pattern)
-    local path = (M.str(url) or ""):gsub("\\", "/")
-    if type(pattern) == "function" then return pattern(path) end
-    return path:match(pattern)
-end
-
--- Any video of the game: its path under Content/Movies without extension, as the companion's clips folder has it:
--- one under CRTV_Movies without that folder ("Bink/Shipping/Mov_CRTV_Clinic"), another with its folder
--- ("Cutscene_Diegetic_Movies/Screen", "UI/Static/Background"). The companion converts what the phone asks for by it.
-function M.anyVideo(path)
-    local key = path:match(M.CRTV_VIDEO) or path:match("Movies/(.+)%.bk2$")
-    return key and (key:gsub("^CRTV_Movies/", ""))
-end
-
--- What a media player (Bink or Unreal's) plays, as videoPath(its URL, pattern), and how far in
--- (seconds) if it says; nil if it plays nothing that matches.
-function M.playing(mediaPlayer, pattern)
-    if not (mediaPlayer and mediaPlayer:IsValid() and mediaPlayer:IsPlaying()) then return nil end
-    local path = M.videoPath(mediaPlayer:GetUrl(), pattern)
-    if path then return path, M.tryNumber(function() return mediaPlayer:GetTime().Ticks / 1e7 end) end
-end
-
 -- JSON for a string or a number that may be missing (null).
 function M.jsonString(s)
     if s == nil then return "null" end

@@ -32,49 +32,14 @@ local function tryBool(fn)
     return ok and type(value) == "boolean" and value or nil
 end
 
--- Whether the gameplay pawn is alive. Townfall keeps its pawn around during some death/retry states, so
--- "valid pawn" alone is not enough for the phone: otherwise the scanner keeps animating after Bill dies.
--- Different builds expose this through slightly different Blueprint/native names; every probe is optional.
+-- Whether the gameplay pawn is alive. Townfall keeps its pawn around during death and retry, so a valid pawn alone
+-- isn't enough: the player Blueprint's IsDead says it, else the character's Health (ATownfallCharacter).
 function M.isAlive()
     if not pawn:IsValid() then return false end
-
-    for _, fn in ipairs({
-        function() return pawn:IsDead() end,
-        function() return pawn:GetIsDead() end,
-        function() return pawn.bIsDead end,
-        function() return pawn.bDead end,
-    }) do
-        local dead = tryBool(fn)
-        if dead ~= nil then return not dead end
-    end
-    for _, fn in ipairs({
-        function() return pawn:IsAlive() end,
-        function() return pawn.GetIsAlive and pawn:GetIsAlive() end,
-        function() return pawn.bIsAlive end,
-    }) do
-        local alive = tryBool(fn)
-        if alive ~= nil then return alive end
-    end
-
-    for _, fn in ipairs({
-        function() return pawn.Health end,
-        function() return pawn.CurrentHealth end,
-        function() return pawn.HitPoints end,
-        function() return pawn.CurrentHP end,
-    }) do
-        local health = common.tryNumber(fn)
-        if health ~= nil then return health > 0 end
-    end
-
-    -- APlayerController commonly leaves Playing for Spectating/Inactive when its pawn dies.
-    local ok, state = pcall(function() return tostring(controller:GetStateName()) end)
-    if ok and state then
-        state = state:lower()
-        if state:find("spectat", 1, true) or state:find("inactive", 1, true) or state:find("dead", 1, true) then
-            return false
-        end
-    end
-    return true
+    local dead = tryBool(function() return pawn:IsDead() end)
+    if dead ~= nil then return not dead end
+    local health = common.tryNumber(function() return pawn.Health end)
+    return health == nil or health > 0
 end
 
 -- The gameplay pawn (an ATownfallPlayerCharacter), or an invalid object in menus and while loading.
@@ -94,18 +59,19 @@ function M.read()
     return pawn:K2_GetActorLocation(), controller:GetControlRotation().Yaw % 360
 end
 
--- How far up the camera looks, in degrees (down negative). Unreal keeps it in 0..360: 350 is 10 down.
-function M.pitch()
-    local pitch = common.tryNumber(function() return controller:GetControlRotation().Pitch end)
-    return pitch and ((pitch + 180) % 360 - 180) or 0
-end
-
 -- Turns the player by `degrees` (clockwise). Steering deliberately controls yaw only; forcing vertical
 -- camera input fights Townfall's own camera behaviour and feels like a free camera.
-function M.turn(degrees)
+local PITCH_LIMIT = 80 -- degrees the phone looks up or down at most; the game's camera may stop it sooner
+
+-- Turns the player by `degrees` and looks `up` degrees further up (down if negative), as the mouse would.
+function M.turn(degrees, up)
     local rotation = controller:GetControlRotation()
     local yaw = rotation.Yaw + degrees
-    controller:SetControlRotation({ Pitch = common.tryNumber(function() return rotation.Pitch end) or 0,
+    local pitch = common.tryNumber(function() return rotation.Pitch end)
+    if pitch and up and up ~= 0 then
+        pitch = math.max(-PITCH_LIMIT, math.min(PITCH_LIMIT, (pitch + 180) % 360 - 180 + up))
+    end
+    controller:SetControlRotation({ Pitch = pitch or 0,
                                     Yaw = yaw,
                                     Roll = common.tryNumber(function() return rotation.Roll end) or 0 })
     local now = controller:GetControlRotation().Yaw
@@ -115,6 +81,12 @@ function M.turn(degrees)
     else
         common.clearChannel("turn check")
     end
+end
+
+-- How far up the player looks (degrees, -180..180: the game keeps 350 for 10 down), or nil.
+function M.pitch()
+    local value = common.tryNumber(function() return controller:GetControlRotation().Pitch end)
+    return value and (value + 180) % 360 - 180
 end
 
 -- Looks the player up again. Returns true when a new gameplay pawn was just

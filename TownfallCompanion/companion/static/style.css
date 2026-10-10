@@ -36,6 +36,28 @@ body {
    their light haze washed the picture out. The glass still shows, as glass. */
 .crtv .part.crt { opacity: .5; }
 .crtv .part.panel { opacity: .45; }
+/* The game's own screen has its scanlines already. */
+.crtv.native-feed .scanlines { display: none; }
+/* An arrow rocks the whole pad a little towards it, as a real one tilts on its pivot; the centre sinks on its own. */
+.dpad { position: absolute; transition: transform 50ms; }
+.dpad.tilt-up { transform: perspective(400px) rotateX(7deg); }
+.dpad.tilt-down { transform: perspective(400px) rotateX(-7deg); }
+.dpad.tilt-left { transform: perspective(400px) rotateY(-7deg); }
+.dpad.tilt-right { transform: perspective(400px) rotateY(7deg); }
+.dpad-base { display: block; width: 100%; height: 100%; pointer-events: none; }
+.dpad-cap { position: absolute; pointer-events: none; transition: transform 40ms, filter 40ms; }
+.dpad-cap.pressed { transform: scale(.94); filter: brightness(.75); }
+.dpad img { -webkit-user-drag: none; }
+.dpad-hit {
+  position: absolute; width: 33.333%; height: 33.333%; padding: 0; border: 0;
+  background: transparent; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.dpad-hit:focus-visible { outline: 2px solid #ddd; outline-offset: -3px; }
+.hit-up { left: 33.333%; top: 0; }
+.hit-down { left: 33.333%; top: 66.666%; }
+.hit-left { left: 0; top: 33.333%; }
+.hit-right { left: 66.666%; top: 33.333%; }
+.hit-center { left: 33.333%; top: 33.333%; border-radius: 50%; }
 .screen {
   position: absolute;
   left: 19.797%;
@@ -52,15 +74,11 @@ body {
 .crtv .part.slider.dragging { transition: none; }
 /* A held TUNING button sinks into the case: a touch smaller and darker, in place (the buttons sit
    diagonally, so any sideways shift reads as the button sliding). */
-.crtv .part.tune-up, .crtv .part.tune-down, .crtv .part.key-f { transition: transform 40ms, filter 40ms; }
+.crtv .part.tune-up, .crtv .part.tune-down { transition: transform 40ms, filter 40ms; }
 .crtv .part.pressed { transform: scale(.965); filter: brightness(.8); }
 
-/* Nothing on the screen takes touches: they fall through to the device (no video/image menus). */
-canvas.screen, .clip { display: block; pointer-events: none; }
-/* The game's clips are 4:3 (640x480) and the screen is wider: stretched to fill it, as a TV of that shape
-   would, with nothing cut off. Under the canvas, which goes transparent while it plays. */
-.clip { object-fit: fill; background: #000; opacity: 0; transition: opacity .25s; }
-.clip.on { opacity: 1; }
+/* Nothing on the screen takes touches: they fall through to the device (no image menus). */
+canvas.screen { display: block; pointer-events: none; }
 .scanlines {
   pointer-events: none;
   background: repeating-linear-gradient(to bottom, rgba(0,0,0,.3) 0 2px, transparent 2px 4px);
@@ -90,7 +108,7 @@ canvas.screen, .clip { display: block; pointer-events: none; }
 }
 
 /* The stations' colours are the game's (app.js sets them from the mod); until they arrive, the ones it
-   sent on 2026-09-30 (linear 1,0,0 / 0,0.683,1 / 0.776,0.496,0).
+   sends (linear 1,0,0 / 0,0.683,1 / 0.776,0.496,0).
    The dial lies on the scale strip, under the bezel and the Panel glass: the stations are tinted into the
    strip, its grain and stains showing through, the needle stands on it and casts a shadow, both run on
    behind the bezel's edges, and the bezel's lip shades the strip under it. */
@@ -136,7 +154,7 @@ canvas.screen, .clip { display: block; pointer-events: none; }
 
 /* Touch areas over the PSD's controls, in % of the canvas from these pixel boxes: AV OUT / VIEW
    slot centred at 311,899 (350x95), TUNING down 430,965 and up 559,837 (175x100 each), running up
-   to the right at about 45 degrees; the F key's well centred at 217,1300 (150x150). */
+   to the right at about 45 degrees. The D-pad's are in crtv/dpad.css. */
 .hotspot {
   position: absolute;
   padding: 0;
@@ -153,7 +171,6 @@ canvas.screen, .clip { display: block; pointer-events: none; }
 .hotspot.view { --tilt: -45.75deg; left: 28.62%; top: 62.09%; width: 32.23%; aspect-ratio: 350 / 95; }
 .hotspot.down { --tilt: -45deg; left: 39.62%; top: 66.63%; width: 16.11%; aspect-ratio: 175 / 100; }
 .hotspot.up { --tilt: -45.5deg; left: 51.51%; top: 57.79%; width: 16.11%; aspect-ratio: 175 / 100; }
-.hotspot.key { --tilt: 0deg; left: 19.98%; top: 89.74%; width: 13.81%; aspect-ratio: 1; border-radius: 22%; }
 
 /* Settings: the one control that isn't part of the device, and the overlay it opens. */
 .cog {
@@ -176,20 +193,44 @@ canvas.screen, .clip { display: block; pointer-events: none; }
 .cog[hidden] { display: none; }
 /* ⌖, next to the cog in VIEW; brighter, as it is used while playing. */
 .cog.center { right: calc(max(10px, env(safe-area-inset-right)) + 50px); opacity: .8; color: #d8d3c8; font-size: 28px; }
+/* While the hint asks for it: lit, ringed and breathing, to be found at a glance. */
+.cog.center.prompting {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: recenter-prompt 1.2s ease-in-out infinite;
+}
+@keyframes recenter-prompt {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201,178,122,.6); transform: scale(1); }
+  50% { box-shadow: 0 0 0 9px rgba(201,178,122,0); transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cog.center.prompting { animation: none; box-shadow: 0 0 0 3px rgba(201,178,122,.6); }
+}
+/* The hint, under ⌖ and pointing at it; tapping it does what ⌖ does. */
 .center-hint {
   position: fixed;
-  top: calc(max(10px, env(safe-area-inset-top)) + 50px);
+  top: calc(max(10px, env(safe-area-inset-top)) + 54px);
   right: max(10px, env(safe-area-inset-right));
   max-width: min(260px, calc(100vw - 20px));
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid rgba(255,255,255,.12);
+  border: 1px solid var(--accent);
   border-radius: 8px;
-  background: rgba(20,19,18,.92);
+  background: rgba(20,19,18,.94);
   color: var(--text);
   font-size: 14px;
   line-height: 1.4;
-  pointer-events: none;
+  cursor: pointer;
+}
+.center-hint::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  right: 63px;
+  border: 8px solid transparent;
+  border-top: 0;
+  border-bottom-color: var(--accent);
 }
 .center-hint[hidden] { display: none; }
 .settings {
@@ -234,7 +275,6 @@ canvas.screen, .clip { display: block; pointer-events: none; }
 .close { width: 36px; height: 36px; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; }
 .row:has(input:disabled) { opacity: .45; }
-.row.stack { flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; padding: 6px 0; }
 .choice { display: flex; gap: 12px; }
 .choice label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .note { margin: 2px 0 8px; color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -250,7 +290,6 @@ canvas.screen, .clip { display: block; pointer-events: none; }
   cursor: pointer;
 }
 .action:active { transform: translateY(1px); }
-.action:disabled { opacity: .45; }
 .status { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 12px; }
 .status dt { color: var(--muted); }
 .status dd { margin: 0; text-align: right; overflow-wrap: anywhere; }

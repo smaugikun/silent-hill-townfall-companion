@@ -6,7 +6,7 @@ import { loadFlag, loadSetting, saveSetting } from "./util.js";
 
 // Vibrate/pause/vibrate... in ms, at medium intensity.
 const PATTERNS = {
-  press: [30],            // a TUNING button or the F key goes down
+  press: [30],            // a TUNING button or the D-pad goes down
   notch: [25],            // the dial passes a notch while tuning
   unlock: [35],           // the selector comes out of its position
   detent: [25],           // the selector passes the middle of the slot

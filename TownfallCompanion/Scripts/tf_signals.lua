@@ -1,7 +1,6 @@
 -- CRTV waypoints and signal objects (URadioWaypointSourceComponent): the frequencies the game
 -- treats as important. Found like enemies (one full walk per level load, then NotifyOnNewObject);
--- only the ones the URadioWaypointManager singleton reports active are sent to the phone, with the
--- line each one is saying, for the phone to play.
+-- only the ones the URadioWaypointManager singleton reports active are sent to the phone.
 
 local common = require("tf_common")
 local player = require("tf_player")
@@ -24,7 +23,7 @@ else
 end
 
 -- URadioWaypointManager::Get() is static; UE4SS calls it on the class default object. That one is
--- looked up once per level: lookups by path are slow in this UE4SS build (tf_cutscene.lua).
+-- looked up once per level: lookups by path are slow in this UE4SS build.
 local managerDefault
 local function waypointManager()
     if managerDefault == nil then
@@ -34,8 +33,7 @@ local function waypointManager()
     return ok and manager and manager:IsValid() and manager or nil
 end
 
--- Read again on every update: the story changes a waypoint's video (after a reload Return_to_Clinic
--- had none at first, then Mov_CRTV_Clinic). Logged when something changed.
+-- Read again on every update, so a change the story makes shows up. Logged when something changed.
 local function readInfo(c, name)
     local ok, info = pcall(function()
         return {
@@ -44,7 +42,6 @@ local function readInfo(c, name)
             tolerance = c.TuningTolerance_Inner,
             toleranceOuter = c.TuningTolerance_Outer,
             reach = { c.distanceSignalFalloffBegin, c.distanceSignalCutoff },
-            video = common.videoPath(c.CrtvVideoSignal_Url, common.CRTV_VIDEO),
             kind = c.bIsSignalObject and "signal_object" or "waypoint",
         }
     end)
@@ -53,9 +50,9 @@ local function readInfo(c, name)
         common.logChange(channel, "TF-SIGNAL", string.format("waypoint %s unreadable: %s", name, tostring(info)))
         return nil
     end
-    common.logChange(channel, "TF-SIGNAL", string.format("%s %s: channel %.3f tolerance %.3f/%s reach %.0f-%.0f cm video %s",
+    common.logChange(channel, "TF-SIGNAL", string.format("%s %s: channel %.3f tolerance %.3f/%s reach %.0f-%.0f cm",
         info.kind, info.name, info.channel, info.tolerance, common.jsonNumber(info.toleranceOuter, "%.3f"),
-        info.reach[1], info.reach[2], info.video or "none"))
+        info.reach[1], info.reach[2]))
     return info
 end
 
@@ -66,50 +63,6 @@ local function levelWaypointName(c)
     if not owner or not owner:IsValid() then return nil end
     local name = common.str(c.WaypointName)
     return name ~= "" and name or nil
-end
-
--- A waypoint's talking (Dialoc dialogue, SDK dump) plays on two FMOD components of its actor, which
--- can only be BP_RadioWaypoint's two: ClearSignal and DistortedSignal.
-local DIALOGUE = { { component = "WaypointDialogueClearComponent", tag = "WaypointDialogueClear", clear = true },
-                   { component = "WaypointDialogueDistComponent", tag = "WaypointDialogueDist", clear = false } }
-
--- What the waypoint says while the game plays it: the line, as the FMOD programmer sound Dialoc gave
--- the component (the name of a stream of Dialogue_EN.bank, like "10c5", seen in-game), the
--- dialogue's own ID, how far in (ms), and whether clear; the clear one first. nil while it is quiet.
-local function speaking(c)
-    for _, d in ipairs(DIALOGUE) do
-        local sound = c[d.component]
-        if sound and sound:IsValid() and sound:IsPlaying() then
-            return {
-                line = common.str(sound.ProgrammerSoundName) or "",
-                id = common.str(c[d.tag].DialogueID) or "",
-                ms = math.floor(tonumber(sound:GetTimelinePosition()) or 0),
-                clear = d.clear,
-            }
-        end
-    end
-end
-
--- The active waypoints' components, as of the last update.
-function M.activeComponents()
-    local list = {}
-    for _, s in ipairs(active) do list[#list + 1] = s.component end
-    return list
-end
-
--- The FMOD components the active waypoints talk on, those there right now.
-function M.dialogueComponents()
-    local list = {}
-    for _, s in ipairs(active) do
-        local c = s.component
-        if c:IsValid() then
-            for _, d in ipairs(DIALOGUE) do
-                local ok, sound = pcall(function() return c[d.component] end)
-                if ok and sound and sound:IsValid() then list[#list + 1] = sound end
-            end
-        end
-    end
-    return list
 end
 
 -- One full walk right after a level load, like tf_enemies.onLevelStart. Addresses get reused
@@ -147,24 +100,10 @@ function M.update()
         table.concat(names, ", "), manager and "" or " (no URadioWaypointManager)"))
 end
 
-local function dialogueJson(name, c)
-    local ok, said = pcall(speaking, c)
-    if not ok then
-        common.logChange("dialogue " .. name, "TF-SIGNAL", string.format("waypoint %s dialogue unreadable: %s", name, tostring(said)))
-        return "null"
-    end
-    common.logChange("dialogue " .. name, "TF-SIGNAL", said
-        and string.format('waypoint %s says line "%s" (dialogue "%s", %s)', name, said.line, said.id, said.clear and "clear" or "distorted")
-        or string.format("waypoint %s is quiet", name))
-    return said and string.format('{"line":%s,"id":%s,"ms":%d,"clear":%s}',
-        common.jsonString(said.line), common.jsonString(said.id), said.ms, tostring(said.clear)) or "null"
-end
-
 -- The active ones as the comma-separated objects of the telemetry "signals" array, with the CRTV
 -- `crtvState` (tf_crtv.read, nil if unreadable).
 -- signal/tuned are the raised in-game CRTV's view; rangeSignal is what a raised CRTV would pick up
--- at this distance (for the phone's own scanner); found: the player has tuned it in before;
--- dialogue: what it says right now (speaking()), or null.
+-- at this distance (the phone reads by it while the game's CRTV is down); found: the player has tuned it in before.
 function M.json(crtvState)
     local p = player.read()
     local raised = crtvState and crtvState.active
@@ -176,13 +115,12 @@ function M.json(crtvState)
             local loc = c:GetOwner():K2_GetActorLocation()
             local x, y = common.toPhone(loc)
             out[#out + 1] = string.format('{"id":%s,"kind":"%s","x":%.2f,"y":%.2f,"channel":%.3f,"tolerance":%.3f,'
-                .. '"toleranceOuter":%s,"rangeSignal":%.2f,"signal":%.2f,"tuned":%s,"found":%s,"video":%s,"dialogue":%s}',
+                .. '"toleranceOuter":%s,"rangeSignal":%.2f,"signal":%.2f,"tuned":%s,"found":%s}',
                 common.jsonString(info.name), info.kind, x, y, info.channel, info.tolerance,
                 common.jsonNumber(info.toleranceOuter, "%.3f"),
                 common.falloff(common.distance(loc, p), info.reach[1], info.reach[2]),
                 raised and c:GetCurrentUntunedSignalStrength() or 0,
-                tostring(tunedAddress == c:GetAddress()), tostring(c:HasBeenFullyTuned()),
-                common.jsonString(info.video), dialogueJson(info.name, c))
+                tostring(tunedAddress == c:GetAddress()), tostring(c:HasBeenFullyTuned()))
         end
     end
     return table.concat(out, ",")

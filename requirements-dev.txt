@@ -1,0 +1,6 @@
+# Only for building tf_native.dll and running the tests. Playing needs none of these: the companion uses only
+# Python's standard library.
+ziglang==0.15.2   # the C compiler for native/build.py
+pefile>=2024.8.26 # tests: reads the game's executable and its FMOD libraries
+lupa>=2.8         # tests: runs the mod's Lua scripts
+pillow>=12.0      # tests: makes and reads JPEG pictures

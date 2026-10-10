@@ -1,5 +1,6 @@
-// The phone's CRTV state machine (companion/static/scanner.js) without a browser: what it asks the game for
-// when the AV OUT / VIEW selector or "In VIEW, show the game's CRTV on the monitor" changes. Run by
+// The phone's CRTV state machine (companion/static/scanner.js) without a browser: what it tells the game when the AV
+// OUT / VIEW selector or "In VIEW, show the game's CRTV on the monitor" changes. Putting away what the phone switched
+// on is the mod's (tf_crtv.lua, test_mod.py): the phone says its mode and switches the CRTV on. Run by
 // test_scanner.py, or directly: node --test tests/scanner.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -19,6 +20,7 @@ let loads = 0;
 async function phone({ raises = false } = {}) {
   clock = 0;
   sent = [];
+  delete globalThis.document;
   const scanner = await import(`${pathToFileURL(SCANNER).href}?run=${loads++}`); // a fresh page each time
   if (raises) scanner.setRaises(true);
   sent = [];
@@ -30,176 +32,132 @@ async function phone({ raises = false } = {}) {
         clock += 100;
       }
     },
+    sent: () => sent.splice(0),
     commands: () => sent.splice(0).filter((c) => c.type === "crtv"),
   };
   return { scanner, world };
 }
 
 const raise = (animate) => ({ type: "crtv", active: true, animate, frequency: 0 });
-const lower = (animate) => ({ type: "crtv", active: false, animate, frequency: 0 });
+const mode = (selector, onMonitor, miniGameShown = false) => ({ type: "mode", selector, onMonitor, miniGameShown });
 
-test("VIEW raises the CRTV the way the setting says", async () => {
+test("VIEW says so first, then switches the CRTV on the way the setting says", async () => {
   for (const raises of [false, true]) {
     const { scanner, world } = await phone({ raises });
     scanner.setSelector("VIEW");
-    assert.deepEqual(world.commands(), [raise(raises)]);
+    assert.deepEqual(world.sent(), [mode("VIEW", raises), raise(raises)]);
   }
 });
 
-test("AV OUT lowers a CRTV the phone raised, the way it raised it", async () => {
-  for (const raises of [false, true]) {
-    const { scanner, world } = await phone({ raises });
-    scanner.setSelector("VIEW");
-    world.commands();
-    world.crtv(true, 1000);
-    scanner.setSelector("AV_OUT");
-    assert.deepEqual(world.commands(), [lower(raises)]);
-  }
-});
-
-test("a CRTV the player raised is not the phone's to lower", async () => {
-  const { scanner, world } = await phone();
-  world.crtv(true, 500);
+test("AV OUT says so and asks nothing of the CRTV: the mod puts away what the phone switched on", async () => {
+  const { scanner, world } = await phone({ raises: true });
   scanner.setSelector("VIEW");
-  scanner.setRaises(true);
+  world.crtv(true, 1000);
+  world.sent();
   scanner.setSelector("AV_OUT");
+  assert.deepEqual(world.sent(), [mode("AV_OUT", true)]);
   world.crtv(true, 3000);
-  assert.deepEqual(world.commands(), []);
-});
-
-test("showing it on the monitor while it is up silently: put away silently, raised with the animation", async () => {
-  const { scanner, world } = await phone({ raises: false });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setRaises(true);
-  assert.deepEqual(world.commands(), [lower(false)]); // the silent one comes down at once
-  world.crtv(false, 400);
-  assert.deepEqual(world.commands(), []);             // the game's own state has to settle first
-  world.crtv(false, 400);
-  assert.deepEqual(world.commands(), [raise(true)]);  // then Bill raises it: the monitor shows it
-});
-
-test("hiding it from the monitor while it is up: lowered with the animation, raised again silently", async () => {
-  const { scanner, world } = await phone({ raises: true });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setRaises(false);
-  assert.deepEqual(world.commands(), [lower(true)]);  // Bill puts it away
-  world.crtv(false, 400);
-  world.crtv(false, 400);
-  assert.deepEqual(world.commands(), [raise(false)]); // and it is on again without showing
-  world.crtv(true, 1000);
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(false)]); // lowered as it was last raised
-});
-
-test("turning the setting off and leaving VIEW at once still lowers it with the animation, never silently", async () => {
-  const { scanner, world } = await phone({ raises: true });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setRaises(false);
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(true)]); // one request, the animated one: nothing flips it silently
   world.crtv(false, 3000);
-  assert.deepEqual(world.commands(), []);             // and the phone leaves the game's CRTV down in AV OUT
+  assert.deepEqual(world.sent(), []); // and nothing is switched on again in AV OUT
 });
 
-test("back in VIEW before the game has put the CRTV away, the phone keeps it", async () => {
-  const { scanner, world } = await phone({ raises: true });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(true)]);
-  world.crtv(true, 500);   // the game hasn't lowered it yet
-  scanner.setSelector("VIEW");
-  world.crtv(true, 6000);
-  assert.deepEqual(world.commands(), []);              // no more lowering, and nothing to raise
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(true)]);   // it is the phone's again: AV OUT puts it away
-});
-
-test("changing the setting changes nothing while the phone isn't holding the CRTV", async () => {
+test("a CRTV that is up already is left as it is", async () => {
   const { scanner, world } = await phone();
-  scanner.setRaises(true);
-  scanner.setRaises(false);
-  world.crtv(true, 1000);
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), []);
-});
-
-test("a lowering the game hasn't carried out is asked for again, not for ever, and not once it is down", async () => {
-  const { scanner, world } = await phone({ raises: true });
+  world.crtv(true, 500); // raised with the radio button
   scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(true)]);
-  world.crtv(true, 1000);
-  assert.deepEqual(world.commands(), []);              // still within its time
-  world.crtv(true, 1000);
-  assert.deepEqual(world.commands(), [lower(true)]);   // not down yet: again
-  world.crtv(true, 6000);
-  assert.deepEqual(world.commands(), [lower(true)]);   // once more...
-  world.crtv(true, 6000);
-  assert.deepEqual(world.commands(), []);              // ...and the game keeps its CRTV after that
-
-  const second = await phone({ raises: true });
-  second.scanner.setSelector("VIEW");
-  second.world.commands();
-  second.world.crtv(true, 1000);
-  second.scanner.setSelector("AV_OUT");
-  second.world.commands();
-  second.world.crtv(false, 3000);                      // it came down
-  assert.deepEqual(second.world.commands(), []);
+  assert.deepEqual(world.sent(), [mode("VIEW", false)]);
 });
 
-test("a paused game can't lower anything: the phone asks again once it runs, with its asks intact", async () => {
-  const { scanner, world } = await phone({ raises: true });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-
-  scanner.setSelector("AV_OUT");
-  assert.deepEqual(world.commands(), [lower(true)]);
-  world.crtv(true, 20000, 0, true);                    // the pause menu, for 20 s
-  assert.deepEqual(world.commands(), []);
-  world.crtv(true, 100);                               // back in the game
-  assert.deepEqual(world.commands(), [lower(true)]);   // asked again at once...
-  world.crtv(true, 2000);
-  assert.deepEqual(world.commands(), [lower(true)]);   // ...and once more after that
-});
-
-test("a CRTV the player raises while the phone is lowering one is left alone", async () => {
-  const { scanner, world } = await phone({ raises: true });
-  scanner.setSelector("VIEW");
-  world.commands();
-  world.crtv(true, 1000);
-  scanner.setSelector("AV_OUT");
-  world.commands();
-  world.crtv(false, 300);  // down for a moment...
-  world.crtv(true, 4000);  // ...and the player raises it with the controller
-  assert.deepEqual(world.commands(), []);
-});
-
-test("tuning raises a CRTV that is down in VIEW the way the setting says", async () => {
+test("the setting is said at once, and the CRTV the mod put away comes on again the new way", async () => {
   for (const raises of [false, true]) {
     const { scanner, world } = await phone({ raises });
     scanner.setSelector("VIEW");
-    world.commands();
+    world.crtv(true, 4000);
+    world.sent();
+    scanner.setRaises(!raises);
+    assert.deepEqual(world.sent(), [mode("VIEW", !raises)]);
+    world.crtv(false, 400);
+    assert.deepEqual(world.sent(), []);                // the game's own state has to settle first
+    world.crtv(false, 400);
+    assert.deepEqual(world.commands(), [raise(!raises)]);
+  }
+});
+
+test("put away in the game, the CRTV comes on again, not while the game is paused", async () => {
+  const { scanner, world } = await phone();
+  scanner.setSelector("VIEW");
+  world.crtv(true, 4000);
+  world.sent();
+  world.crtv(false, 3000, 0, true); // the pause menu
+  assert.deepEqual(world.commands(), []);
+  world.crtv(false, 100);
+  assert.deepEqual(world.commands(), [raise(false)]);
+});
+
+test("a hidden page tells the game AV OUT; in sight again, VIEW, and the CRTV comes on", async () => {
+  const { scanner, world } = await phone();
+  globalThis.document = { hidden: false };
+  scanner.setSelector("VIEW");
+  world.crtv(true, 1000);
+  world.sent();
+  document.hidden = true; // the screen off, or another app
+  scanner.onVisibilityChange();
+  assert.deepEqual(world.sent(), [mode("AV_OUT", false)]);
+  world.crtv(false, 3000); // the mod put it away
+  assert.deepEqual(world.sent(), []);
+  document.hidden = false;
+  scanner.onVisibilityChange();
+  assert.deepEqual(world.sent(), [mode("VIEW", false), raise(false)]);
+});
+
+test("the mode is said again as it is, and leaving the page says AV OUT", async () => {
+  const { scanner, world } = await phone({ raises: true });
+  scanner.setSelector("VIEW");
+  world.sent();
+  scanner.sayMode();
+  scanner.sayMode(true);
+  assert.deepEqual(world.sent(), [mode("VIEW", true), mode("AV_OUT", true)]);
+});
+
+test("tuning switches a CRTV that is down on in VIEW the way the setting says; in AV OUT only the dial moves", async () => {
+  for (const raises of [false, true]) {
+    const { scanner, world } = await phone({ raises });
+    scanner.setSelector("VIEW");
     world.crtv(false, 100);
+    world.sent();
     scanner.tune(0.01);
     assert.deepEqual(world.commands().map(({ animate, active }) => [active, animate]), [[true, raises]]);
-    world.crtv(true, 1000);
     scanner.setSelector("AV_OUT");
-    assert.deepEqual(world.commands().map(({ animate, active }) => [active, animate]), [[false, raises]]);
+    world.sent();
+    clock += 1000;
+    scanner.tune(0.01);
+    assert.deepEqual(world.commands().map(({ active }) => active), [undefined]);
   }
+});
+
+test("after a quick tune the needle follows the game's dial at once, not the phone's own from a moment before", async () => {
+  const { scanner, world } = await phone();
+  scanner.setSelector("VIEW");
+  world.crtv(true, 1000, 0.5);
+  world.sent();
+  scanner.tune(0.01);                       // goes out at once
+  scanner.tune(0.01);                       // a moment later: held back for SEND_MS
+  world.crtv(true, 100, 0.5);
+  assert.equal(scanner.control.dial, 0.52); // the game's telemetry is a step behind the phone's tuning
+  scanner.pressFineTune("left");            // the game jumps to the next frequency
+  world.crtv(true, 100, 0.15);
+  assert.equal(scanner.control.dial, 0.15);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.deepEqual(world.commands(), [{ type: "crtv", frequency: 0.51 }]); // the held-back one doesn't pull it back
+});
+
+test("the mini-game setting is said at once, and leaves the CRTV as it is", async () => {
+  const { scanner, world } = await phone();
+  scanner.setSelector("VIEW");
+  world.crtv(true, 4000);
+  world.sent();
+  scanner.setMiniGameShown(true);
+  assert.deepEqual(world.sent(), [mode("VIEW", false, true)]);
+  world.crtv(true, 3000);
+  assert.deepEqual(world.sent(), []);
 });
