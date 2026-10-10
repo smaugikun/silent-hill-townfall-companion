@@ -81,24 +81,16 @@ is wrong, what to do about it:
 - **Network adapters**: which of the PC's addresses the phone should open. VirtualBox, VMware, Hyper-V (also used
   by WSL and Docker) and VPNs give the PC addresses of their own that no phone can reach. The window shows the
   right address first, with its QR code.
-- **Network profile**: Windows calls each network *Private* or *Public*, and its firewall lets Python in by the
-  kind. When Windows first asks about Python, the answer usually allows it on Private networks only; so on a network
-  Windows treats as Public (common for a cable connection) the phone is kept out. Then make your home network
-  *Private*: Settings → *Network & internet* → *Wi-Fi* → your network's *properties* → *Network profile type* (for
-  a cable: Settings → *Network & internet* → *Ethernet*); the button **Open Wi-Fi settings** (or **Open Ethernet
-  settings**) goes there. If Python is allowed on Public networks too, the kind doesn't matter, and the line says
-  so.
-- **Windows Firewall**: whether a rule lets this Python in on that kind of network. **Allow Python on private
-  networks** adds one, after Windows asks for permission; the companion never changes the firewall without that
-  click. A rule that blocks Python wins over every rule that allows it. Windows makes such rules when its question
-  about Python is answered with *Cancel*: **Open the firewall's rules**, select *Inbound Rules*, and delete the
-  Python rules with a red sign. If another security program (an antivirus with its own firewall) looks after the
-  firewall, the check names it: allow Python there.
+- **Windows Firewall**: whether the firewall lets this Python in on the network the PC is on. Windows calls each
+  network *Private* or *Public* and lets programs in by that kind; either works once Python is allowed on it.
+  **Allow Python through the firewall** does that, after Windows asks for permission: it turns off a rule that
+  blocks Python there (Windows makes one when its question about Python is answered with *Cancel*) and adds one
+  that lets it in. The companion never changes the firewall without that click. If another security program (an
+  antivirus with its own firewall) looks after the firewall, the check names it: allow Python there.
 - **Phone test**: opening the page on the phone (the address or its QR code) is the test. To test without the
   PIN, open the address with `/check` at the end, e.g. `http://192.168.1.50:8790/check` (this works without the
-  window too): it says *Your phone reached Townfall Companion*, and the window says which address the phone came
-  from and when. Once a phone has got through, the Network profile and Windows Firewall lines say OK, whatever
-  the rules look like: the way works.
+  window too): it says *Your phone reached Townfall Companion*. Once a phone has got through, this line says from
+  which address and when, and the Windows Firewall line says OK whatever its rules look like: the way works.
 
 When everything on the PC is fine but the phone doesn't get through:
 

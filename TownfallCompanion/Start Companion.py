@@ -25,12 +25,15 @@ if sys.version_info < (3, 10):
     raise SystemExit(1)
 
 
-def leave_console(pythonw=None, start=subprocess.Popen):
-    """Starts the companion again with pythonw.exe, the Python that has no console window, so that only the
-    companion's own window shows: True once that copy runs, and this one, with its console, can end. False to stay in
-    the console: not Windows, no pythonw.exe next to this Python, or no screen for a window here."""
-    pythonw = Path(pythonw or Path(sys.executable).with_name("pythonw.exe"))
-    if sys.platform != "win32" or not pythonw.exists():
+def leave_console(python=None, start=subprocess.Popen):
+    """Starts the companion again with this same Python but without a console window, so that only the companion's
+    own window shows: True once that copy runs, and this one, with its console, can end. False to stay in the
+    console: not Windows, or no screen for a window here.
+
+    The same python.exe, not pythonw.exe: Windows Firewall judges each program by itself, and the rule that lets
+    the phone in is for the Python the player allowed when Windows asked."""
+    python = Path(python or sys.executable)
+    if sys.platform != "win32" or not python.exists():
         return False
     try:
         import tkinter
@@ -40,8 +43,8 @@ def leave_console(pythonw=None, start=subprocess.Popen):
     except Exception:
         return False
     try:
-        start([str(pythonw), str(Path(__file__).resolve()), *sys.argv[1:]], env={**os.environ, WINDOW_ONLY: "1"},
-              creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
+        start([str(python), str(Path(__file__).resolve()), *sys.argv[1:]], env={**os.environ, WINDOW_ONLY: "1"},
+              creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
     except OSError:
         return False
     return True

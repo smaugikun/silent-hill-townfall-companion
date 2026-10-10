@@ -807,24 +807,22 @@ class GameExitTest(unittest.TestCase):
 
 
 class WindowHookTest(unittest.TestCase):
-    """What the companion's window (gui.py) needs from the bridge: main() in a thread, a word about each visit to
-    /check, and stop()."""
+    """What the companion's window (gui.py) needs from the bridge: main() in a thread, the addresses that got
+    through to it, and stop()."""
     HARNESS = "\n".join([
         "import sys, threading",
         "sys.path.insert(0, sys.argv.pop(1))",
         "import bridge",
-        "visits = []",
-        "bridge.check_listeners.append(visits.append)",
         "thread = threading.Thread(target=bridge.main)",
         "thread.start()",
         "sys.stdin.readline()",
-        "print('visits', visits, flush=True)",
+        "print('visitors', sorted(bridge.visitors), flush=True)",
         "bridge.stop()",
         "thread.join(10)",
         "print('stopped', not thread.is_alive(), flush=True)",
     ])
 
-    def test_main_runs_in_a_thread_hears_the_check_and_stops(self):
+    def test_main_runs_in_a_thread_knows_who_got_through_and_stops(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # see ReplaceOlderTest
             folder = Path(tmp)
             process = subprocess.Popen(
@@ -847,7 +845,7 @@ class WindowHookTest(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-            self.assertIn("visits ['127.0.0.1']", output)  # the window tells this PC's own visits apart itself
+            self.assertIn("visitors ['127.0.0.1']", output)  # the window tells this PC's own visits apart itself
             self.assertIn("stopped True", output)
             self.assertEqual(process.returncode, 0)
 
@@ -912,29 +910,26 @@ class LauncherTest(unittest.TestCase):
                 process.wait()
                 process.stdout.close()
 
-    @unittest.skipUnless(sys.platform == "win32", "pythonw.exe is Windows'")
-    def test_for_the_window_it_hands_over_to_python_without_a_console(self):
+    @unittest.skipUnless(sys.platform == "win32", "consoles and their windows are Windows'")
+    def test_for_the_window_it_hands_over_to_the_same_python_without_a_console(self):
         launcher = runpy.run_path(str(self.LAUNCHER), run_name="launcher")  # its functions, without starting it
         started, saved = [], sys.argv
         sys.argv = [str(COMPANION / "bridge.py"), "--port", "18790"]
         try:
-            with tempfile.TemporaryDirectory() as tmp:
-                pythonw = Path(tmp) / "pythonw.exe"
-                pythonw.write_bytes(b"")
-                handed_over = launcher["leave_console"](pythonw, lambda command, **options: started.append((command,
-                                                                                                           options)))
+            handed_over = launcher["leave_console"](None, lambda command, **options: started.append((command, options)))
         finally:
             sys.argv = saved
         self.assertTrue(handed_over)
         (command, options), = started
-        self.assertEqual(command, [str(pythonw), str(self.LAUNCHER.resolve()), "--port", "18790"])  # its arguments too
+        # This very python.exe (the firewall's rule is for it), this file, its arguments too.
+        self.assertEqual(command, [sys.executable, str(self.LAUNCHER.resolve()), "--port", "18790"])
         self.assertEqual(options["env"][launcher["WINDOW_ONLY"]], "1")  # that copy doesn't hand over again
-        self.assertTrue(options["creationflags"] & subprocess.DETACHED_PROCESS)  # not tied to this console
+        self.assertTrue(options["creationflags"] & subprocess.CREATE_NO_WINDOW)  # no console window at all
 
-    def test_without_pythonw_it_stays_in_the_console(self):
+    def test_without_its_python_it_stays_in_the_console(self):
         launcher = runpy.run_path(str(self.LAUNCHER), run_name="launcher")
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertFalse(launcher["leave_console"](Path(tmp) / "pythonw.exe", lambda *a, **k: self.fail("started")))
+            self.assertFalse(launcher["leave_console"](Path(tmp) / "python.exe", lambda *a, **k: self.fail("started")))
 
     def test_it_runs_the_bridge(self):
         result = self.run_launcher("--help")

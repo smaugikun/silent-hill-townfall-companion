@@ -2,7 +2,7 @@
 phones are connected, the companion's log, and the connection check (netcheck.py).
 
 Start Companion.py opens it when Python has tkinter. bridge.main() runs in a thread meanwhile, printing into the log
-(and on into the console window behind, as before), and closing the window stops it. Without tkinter, which
+(and on into a console window, if there is one), and closing the window stops it. Without tkinter, which
 Python's installer can leave out, or without a screen, the companion runs in its console window instead.
 """
 import os
@@ -25,13 +25,7 @@ BADGES = {  # step state -> (badge, colour)
     netcheck.OK: (" OK ", "#5f8a4c"), netcheck.PROBLEM: (" FIX ", "#b0503c"), netcheck.NOTE: (" NOTE ", "#a8822f"),
     netcheck.WAIT: (" WAIT ", "#4f6f8f"), netcheck.UNKNOWN: (" N/A ", "#5a544a"), netcheck.CHECKING: (" ... ", "#5a544a"),
 }
-ACTIONS = {  # a step's button: action -> label
-    "allow-python": "Allow Python on private networks",
-    "firewall-rules": "Open the firewall's rules",
-    "wifi-settings": "Open Wi-Fi settings",
-    "ethernet-settings": "Open Ethernet settings",
-}
-SETTINGS_PAGES = {"wifi-settings": "ms-settings:network-wifi", "ethernet-settings": "ms-settings:network-ethernet"}
+ACTIONS = {"allow-python": "Allow Python through the firewall"}  # a step's button: action -> label
 LOG_LINES = 2000  # the bridge logs every request; older lines go
 
 
@@ -76,8 +70,7 @@ class Window:
         self.thread = None
         self.served = self.closing = self.checking = self.gone = False
         self.findings = None
-        self.visit = None            # (ip, time) of the last phone that opened /check
-        self.phones = 0
+        self.visit = None            # (ip, time) of the latest phone that got through to the companion
         self.shown = None            # what the address area and QR code show, to redraw only on a change
         self.step_buttons = []
         self.ticks = 0
@@ -164,15 +157,12 @@ class Window:
         """Runs the companion in a thread, its output in the log; the first check runs once it listens."""
         self.streams = sys.stdout, sys.stderr
         sys.stdout = sys.stderr = LogStream(self.events, sys.__stdout__)
-        self.companion.check_listeners.append(self.heard)
         self.thread = threading.Thread(target=self.serve, name="companion", daemon=True)
         self.thread.start()
         self.root.after(100, self.poll)
 
     def finish(self):
         sys.stdout, sys.stderr = self.streams
-        if self.heard in self.companion.check_listeners:
-            self.companion.check_listeners.remove(self.heard)
         # The heartbeat thread beats until the process ends. One beat after main() cleaned up would say for a few
         # seconds that the companion is still here, and a new one wouldn't start meanwhile.
         folder = self.companion.Handler.commands_dir
@@ -183,9 +173,6 @@ class Window:
                     beat.unlink()
                 except OSError:
                     pass
-
-    def heard(self, ip):
-        self.events.put(("visit", ip))
 
     def serve(self):
         problem = None
@@ -209,12 +196,6 @@ class Window:
                 break
             if kind == "log":
                 texts.append(value)
-            elif kind == "visit":
-                addresses = self.findings.addresses if self.findings else None
-                own = {address.ip for address in addresses} if isinstance(addresses, list) else set()
-                if netcheck.from_phone(value, own | {self.companion.lan_ip()}):
-                    self.visit = (value, time.strftime("%H:%M:%S"))
-                    self.show_steps()
             elif kind == "findings":
                 self.findings = value
                 self.show_addresses()
@@ -255,9 +236,22 @@ class Window:
             game = "Game: not running"
         self.status.configure(text=f"{game}    Phones with the page open: {phones}",
                               fg=BRIGHT if companion.game_file_live else DIM)
-        if phones != self.phones:
-            self.phones = phones
+        visit = self.phone_visit()
+        if visit != self.visit:
+            self.visit = visit
             self.show_steps()
+
+    def phone_visit(self):
+        """(ip, time) of the latest phone that got through to the companion, or None. The PC's own visits don't
+        count: the check's probes, or the page opened on the PC, never pass the firewall."""
+        if self.findings is None or not isinstance(self.findings.addresses, list):
+            return None
+        own = {address.ip for address in self.findings.addresses} | {self.findings.default_ip}
+        phones = [(at, ip) for ip, at in list(self.companion.visitors.items()) if netcheck.from_phone(ip, own)]
+        if not phones:
+            return None
+        at, ip = max(phones)
+        return ip, time.strftime("%H:%M:%S", time.localtime(at))
 
     def phone_urls(self):
         """[(url, what it is)], the one to open first; empty while the companion isn't listening, or listens
@@ -384,7 +378,7 @@ class Window:
         self.step_buttons = []
         steps.configure(state="normal")
         steps.delete("1.0", "end")
-        for number, step in enumerate(netcheck.steps(self.findings, self.visit, self.phones)):
+        for number, step in enumerate(netcheck.steps(self.findings, self.visit)):
             if number:
                 steps.insert("end", "\n", "gap")
             badge, _ = BADGES[step.state]
@@ -405,13 +399,10 @@ class Window:
 
     def act(self, action):
         if action == "allow-python":
-            program, arguments = netcheck.allow_rule(self.findings.program)
-            print(f"Asking Windows for permission to add a firewall rule: {os.path.basename(program)} {arguments}")
+            program, arguments = netcheck.allow_rule(self.findings)
+            print(f"Asking Windows for permission to let Python in on "
+                  f"{netcheck.network_profile(self.findings)} networks.")
             threading.Thread(target=self.elevate, args=(program, arguments), daemon=True).start()
-        elif action == "firewall-rules":
-            self.open("wf.msc")
-        elif action in SETTINGS_PAGES:
-            self.open(SETTINGS_PAGES[action])
 
     def elevate(self, program, arguments):
         try:
@@ -423,16 +414,11 @@ class Window:
         if result is None:
             print("Nothing changed: Windows' permission question was answered with No.")
         elif result == 0:
-            print(f"Firewall rule added: \"{netcheck.RULE_NAME}\" lets Python in on Private networks.")
+            print(f"Firewall rule added: \"{netcheck.RULE_NAME}\" lets Python in on "
+                  f"{netcheck.network_profile(self.findings)} networks.")
             self.check()
         else:
             print(f"The firewall rule couldn't be added ({result if isinstance(result, str) else f'exit code {result}'}).")
-
-    def open(self, target):
-        try:
-            os.startfile(target)
-        except (AttributeError, OSError) as exc:
-            print(f"Couldn't open {target}: {exc}")
 
     def ended(self, problem):
         if self.closing or (problem is None and self.served):

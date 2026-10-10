@@ -81,7 +81,7 @@ $survey = [ordered]@{
       $program = $_.Program
       $_ | Get-NetFirewallRule | ForEach-Object {
         $ports = $_ | Get-NetFirewallPortFilter
-        [pscustomobject]@{ DisplayName = $_.DisplayName; Program = $program; Enabled = "$($_.Enabled)";
+        [pscustomobject]@{ Name = $_.Name; DisplayName = $_.DisplayName; Program = $program; Enabled = "$($_.Enabled)";
           Direction = "$($_.Direction)"; Action = "$($_.Action)"; Profile = "$($_.Profile)";
           Protocol = "$($ports.Protocol)"; LocalPort = @($ports.LocalPort) } } } }
   products = Section { Get-CimInstance -Namespace root/SecurityCenter2 -ClassName FirewallProduct |
@@ -107,7 +107,7 @@ class Step:
     state: str          # OK, PROBLEM, NOTE, WAIT, UNKNOWN or CHECKING
     found: str          # what the check found
     fix: str = ""       # what to do about it
-    action: str = None  # a button for it: "allow-python", "firewall-rules", "wifi-settings", "ethernet-settings"
+    action: str = None  # a button for it: "allow-python"
 
 
 @dataclass
@@ -279,23 +279,32 @@ def firewall_verdict(survey, program, port, profile):
             return "open", []
         if _named(settings.get("AllowInboundRules"), {0: "False", 1: "True"}) == "False":
             return "shielded", None
-    mine = [rule for rule in survey["rules"] if same_program(rule.get("Program"), program)]
-    inbound = [rule for rule in mine if _true(_named(rule.get("Enabled"), {1: "True", 2: "False"}))
-               and _named(rule.get("Direction"), {1: "Inbound", 2: "Outbound"}) == "Inbound" and _covers_port(rule, port)]
-    actions = {2: "Allow", 4: "Block"}
+    inbound = _inbound_rules(survey, program, port)
     here = [rule for rule in inbound if _has_profile(rule.get("Profile", "Any"), profile)]
     for action, verdict in (("Block", "blocked"), ("Allow", "allowed")):  # a block rule wins over an allow rule
-        rule = next((rule for rule in here if _named(rule.get("Action"), actions) == action), None)
+        rule = next((rule for rule in here if _action(rule) == action), None)
         if rule:
             return verdict, rule.get("DisplayName") or "(no name)"
-    elsewhere = sorted({name for rule in inbound if _named(rule.get("Action"), actions) == "Allow"
+    elsewhere = sorted({name for rule in inbound if _action(rule) == "Allow"
                         for name in ("Domain", "Private", "Public") if _has_profile(rule.get("Profile", "Any"), name)})
     if elsewhere:
         return "elsewhere", elsewhere
-    others = [rule.get("Program") for rule in survey["rules"] if rule not in mine and rule.get("Program")]
+    others = [rule.get("Program") for rule in survey["rules"]
+              if rule.get("Program") and not same_program(rule.get("Program"), program)]
     if others:
         return "other-python", others[0]
     return "missing", None
+
+
+def _action(rule):
+    return _named(rule.get("Action"), {2: "Allow", 4: "Block"})
+
+
+def _inbound_rules(survey, program, port):
+    """program's enabled inbound rules that cover TCP connections to port."""
+    return [rule for rule in survey["rules"] if same_program(rule.get("Program"), program)
+            and _true(_named(rule.get("Enabled"), {1: "True", 2: "False"}))
+            and _named(rule.get("Direction"), {1: "Inbound", 2: "Outbound"}) == "Inbound" and _covers_port(rule, port)]
 
 
 def best_address(found):
@@ -398,57 +407,24 @@ def adapter_step(found):
     return Step(title, NOTE if vpn else OK, "\n".join([use, *lines]), fix)
 
 
-def profile_step(found, reached=False):
-    """reached: a phone got through, which settles what the network profile and the firewall's rules let in."""
-    title = "Network profile"
-    if found.survey is PENDING:
-        return Step(title, CHECKING, "Asking Windows ...")
-    best = best_address(found)
-    row = connection_profile(found.survey, best)
-    if row is None:
-        return Step(title, UNKNOWN, "Not available: Windows didn't say which profile the network has.")
-    profile = firewall_profile(row.get("NetworkCategory"))
-    network = f"\"{row.get('Name')}\" ({row.get('InterfaceAlias')})" if row.get("Name") else row.get("InterfaceAlias")
-    if profile == "Private":
-        return Step(title, OK, f"{network} is a Private network in Windows.")
-    if reached:
-        return Step(title, OK, f"Windows treats {network} as a {profile} network, and a phone got through: nothing "
-                    "to change.")
-    if profile == "Domain":
-        return Step(title, NOTE, f"{network} is a work (domain) network: its administrator decides what Windows "
-                    "Firewall lets in.")
-    wifi = any(word in f"{row.get('InterfaceAlias')} {best.description if best else ''}".casefold()
-               for word in ("wi-fi", "wifi", "wlan", "wireless", "802.11"))
-    where = f"Wi-Fi → {row.get('Name') or 'the network'} properties" if wifi else "Ethernet"
-    switch = (f"Make it Private: Settings → Network & internet → {where} → Network profile type: Private "
-              "(Windows 10: Settings → Network & Internet → Status → Properties). Only on a network you trust, such "
-              "as your home's, not in a hotel or café.")
-    action = "wifi-settings" if wifi else "ethernet-settings"
-    if firewall_verdict(found.survey, found.program, found.port, "Public")[0] in ("allowed", "open"):
-        return Step(title, OK, f"Windows treats {network} as a Public network, and Python is allowed in on Public "
-                    "networks: the phone gets through.")
-    return Step(title, PROBLEM, f"Windows treats {network} as a Public network, where its firewall keeps phones "
-                "away from Python.", switch, action)
+def network_profile(found):
+    """The Windows Firewall profile of the network the phone should use: "Private", "Public" or "Domain". Windows
+    lets programs in by the profile, and either works once Python is allowed in on it."""
+    row = connection_profile(found.survey, best_address(found)) if found.survey is not PENDING else None
+    return firewall_profile(row.get("NetworkCategory")) if row else "Private"
 
 
 def firewall_step(found, reached=False):
+    """reached: a phone got through, which settles what the firewall lets in, whatever its rules seem to say."""
     title = "Windows Firewall"
     if found.survey is PENDING:
         return Step(title, CHECKING, "Asking Windows ...")
-    row = connection_profile(found.survey, best_address(found))
-    profile = firewall_profile(row.get("NetworkCategory")) if row else "Private"
+    profile = network_profile(found)
     verdict, detail = firewall_verdict(found.survey, found.program, found.port, profile)
     python = f"Python ({found.program})"
-    allow = ("Click the button: Windows asks for permission, then a rule lets Python in on Private networks." +
-             (" Make the network Private too (above)." if profile == "Public" else ""))
-    # Allowed on Private networks and blocked on this Public one is how Windows' own question leaves it: the
-    # network is the thing to change.
-    to_private = "Make the network Private (Network profile, above): there Python is allowed in."
-    private_ok = profile == "Public" and \
-        firewall_verdict(found.survey, found.program, found.port, "Private")[0] in ("allowed", "open")
+    allow = f"Click the button: Windows asks for permission, then its firewall lets Python in on {profile} networks."
     if reached and verdict != "allowed" and not (verdict == "open" and not detail):
-        return Step(title, OK, f"A phone got through, so the firewall lets it in on {profile} networks: nothing to "
-                    "change.")
+        return Step(title, OK, "A phone got through: the firewall lets it in.")
     if verdict == "unknown":
         return Step(title, UNKNOWN, "Not available: Windows didn't list its firewall settings.")
     if verdict == "open":
@@ -463,21 +439,16 @@ def firewall_step(found, reached=False):
                     f"Windows Security → Firewall & network protection → {profile} network: untick \"Blocks all "
                     "incoming connections, including those in the list of allowed apps\".")
     if verdict == "blocked":
-        blocked = f"A firewall rule named \"{detail}\" blocks {python} on {profile} networks."
-        if private_ok:
-            return Step(title, PROBLEM, blocked + " Windows makes one for each kind of network left unticked when it "
-                        "asks about Python.", to_private)
-        return Step(title, PROBLEM, blocked + " Windows makes one when its question about Python is answered with "
-                    "Cancel.",
-                    f"Open the firewall's rules (the button; Windows asks for permission), select Inbound Rules, "
-                    f"and delete the rules named \"{detail}\" that have a red sign and this program. Then check "
-                    "again.", "firewall-rules")
+        return Step(title, PROBLEM, f"A firewall rule named \"{detail}\" blocks {python} on {profile} networks. "
+                    "Windows makes one when its question about Python is answered with Cancel, or for a kind of "
+                    "network left unticked there.",
+                    "Click the button: Windows asks for permission, then its firewall turns that rule off and lets "
+                    f"Python in on {profile} networks.", "allow-python")
     if verdict == "allowed":
         return Step(title, OK, f"{python} may receive connections on {profile} networks (rule \"{detail}\").")
     if verdict == "elsewhere":
-        elsewhere = f"{python} is allowed in on {' and '.join(detail)} networks only, and this network is {profile}."
-        return Step(title, PROBLEM, elsewhere, to_private) if private_ok else \
-            Step(title, PROBLEM, elsewhere, allow, "allow-python")
+        return Step(title, PROBLEM, f"{python} is allowed in on {' and '.join(detail)} networks only, and Windows "
+                    f"counts this network as {profile}.", allow, "allow-python")
     if verdict == "other-python":
         return Step(title, PROBLEM, f"The firewall's rules are for another Python ({detail}), not for the one "
                     f"that runs the companion ({found.program}).", allow, "allow-python")
@@ -492,14 +463,11 @@ def phone_address(found):
     return best.ip if best else None
 
 
-def phone_step(found, pc_side, visit=None, phones=0):
-    """pc_side: the other steps; visit: (ip, "14:02:31") of the last phone that opened /check; phones: how many
-    have the page open."""
+def phone_step(found, pc_side, visit=None):
+    """pc_side: the other steps; visit: (ip, "14:02:31") of the latest phone that got through to the companion."""
     title = "Phone test"
     if visit:
         return Step(title, OK, f"A phone reached the PC from {visit[0]} at {visit[1]}.")
-    if phones:
-        return Step(title, OK, "A phone has the page open." if phones == 1 else f"{phones} phones have the page open.")
     address = phone_address(found)
     target = f"http://{address}:{found.port}/check" if address else "/check at the address above"
     if any(step.state == CHECKING for step in pc_side):
@@ -507,16 +475,17 @@ def phone_step(found, pc_side, visit=None, phones=0):
     elif any(step.state == PROBLEM for step in pc_side):
         fix = "Fix what the steps above say first; then try again."
     else:
-        fix = "Everything on the PC is ready. If the phone shows an error or keeps loading: " + NETWORK_ADVICE
+        fix = ("Everything on the PC is ready. If the phone shows an error or keeps loading, the cause lies between "
+               "the phone and the router. " + NETWORK_ADVICE)
     return Step(title, WAIT, f"On the phone, open the address above or scan its QR code, or open {target}, which "
                 "needs no PIN. This line changes when the phone gets through.", fix)
 
 
-def steps(found, visit=None, phones=0):
-    reached = bool(visit or phones)  # whatever the rules say, the way from the phone works
-    pc_side = [local_step(found), lan_step(found), adapter_step(found), profile_step(found, reached),
-               firewall_step(found, reached)]
-    return [*pc_side, phone_step(found, pc_side, visit, phones)]
+def steps(found, visit=None):
+    """visit: (ip, "14:02:31") of the latest phone that got through to the companion (its page, the PIN page or
+    /check), or None. Once one has, the way from the phone works, whatever the firewall's rules seem to say."""
+    pc_side = [local_step(found), lan_step(found), adapter_step(found), firewall_step(found, reached=bool(visit))]
+    return [*pc_side, phone_step(found, pc_side, visit)]
 
 
 def probe(url, timeout=3.0):
@@ -543,15 +512,21 @@ def system_program(*parts):
     return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", *parts)
 
 
+def powershell():
+    program = system_program("WindowsPowerShell", "v1.0", "powershell.exe")
+    return program if os.path.isfile(program) else "powershell"
+
+
+def encoded(script):
+    """A PowerShell script as -EncodedCommand takes it: no quoting to get wrong on the way."""
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
 def survey(run=subprocess.run):
     """(the PowerShell survey's text, why there is none)."""
-    powershell = system_program("WindowsPowerShell", "v1.0", "powershell.exe")
-    if not os.path.isfile(powershell):
-        powershell = "powershell"
-    script = base64.b64encode(SURVEY.encode("utf-16-le")).decode("ascii")
     try:
-        result = run([powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", script], capture_output=True,
-                     timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        result = run([powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded(SURVEY)],
+                     capture_output=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except FileNotFoundError:
         return None, "PowerShell isn't on this system"
     except (OSError, subprocess.SubprocessError) as exc:
@@ -590,11 +565,26 @@ def this_program():
     return sys.executable
 
 
-def allow_rule(program):
-    """The netsh command that lets program receive TCP connections on Private networks, as (program, arguments)."""
-    return system_program("netsh.exe"), (
-        f'advfirewall firewall add rule name="{RULE_NAME}" dir=in action=allow program="{program}" enable=yes '
-        f'profile=private protocol=TCP description="Lets phones on private networks open the Townfall Companion page."')
+def allow_rule(found):
+    """What the Allow button runs after Windows' permission prompt, as (program, arguments): PowerShell turns off the
+    rules that block the companion's Python on the kind of network the PC is on, and adds one that lets it in there.
+    The network itself stays as it is."""
+    profile = network_profile(found)
+    blocking = [rule["Name"] for rule in _inbound_rules(found.survey, found.program, found.port)
+                if _action(rule) == "Block" and _has_profile(rule.get("Profile", "Any"), profile) and rule.get("Name")] \
+        if found.survey else []
+    quoted = lambda text: "'" + str(text).replace("'", "''") + "'"
+    script = "\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        "try {",
+        *(f"  Disable-NetFirewallRule -Name {quoted(name)}" for name in blocking),
+        f"  New-NetFirewallRule -DisplayName {quoted(RULE_NAME)} -Direction Inbound -Action Allow -Protocol TCP "
+        f"-Program {quoted(found.program)} -Profile {profile} "
+        f"-Description {quoted('Lets the phone open the Townfall Companion page.')} | Out-Null",
+        "  exit 0",
+        "} catch { exit 1 }",
+    ])
+    return powershell(), f"-NoProfile -NonInteractive -EncodedCommand {encoded(script)}"
 
 
 def run_elevated(program, arguments, wait_s=120):

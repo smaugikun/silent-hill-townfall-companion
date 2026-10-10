@@ -334,7 +334,7 @@ PIN_TRIES = 5        # wrong PINs from one address before it has to wait
 PIN_LOCK_S = 60
 pin_token = None     # set by main(): what the cookie of a phone that knows the PIN holds; None: no PIN
 phone_info = {}      # set by main(): {"urls": [...], "pin": "..."} for the banner in the companion's window
-check_listeners = []  # the companion's window (gui.py): each is called with the address that opened /check
+visitors = {}        # address -> time of its first connection: what got through to the companion (gui.py's check)
 running = None       # set by main(): the server, for stop()
 pin_failures = {}    # address -> (wrong tries, locked until)
 pin_lock = threading.Lock()
@@ -386,6 +386,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC), **kwargs)
+
+    def setup(self):
+        super().setup()
+        visitors.setdefault(self.client_address[0], time.time())
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
@@ -479,8 +483,6 @@ class Handler(SimpleHTTPRequestHandler):
             self.close_connection = True
 
     def _check_page(self):
-        for listener in check_listeners:
-            listener(self.client_address[0])
         # The address as the phone typed it, so the page can say where to go next.
         address = "http://" + (self.headers.get("Host") or f"{lan_ip()}:{self.server.server_address[1]}")
         raw = (CHECK_PAGE.replace("{pin}", " and enter the PIN" if pin_token else "")

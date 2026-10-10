@@ -3,6 +3,8 @@ Skipped where Python has no tkinter; the window itself also where there is no sc
 import queue
 import sys
 import threading
+import time
+import types
 import unittest
 from pathlib import Path
 
@@ -46,6 +48,23 @@ class WindowTest(unittest.TestCase):
             self.assertIn("The companion on this PC", window.steps.get("1.0", "end"))
             self.assertIn("Townfall Companion 1.0.0", window.log.get("1.0", "end"))
             self.assertGreater(len(window.qr.find_all()), 100)  # the modules of a version 2 code
+        finally:
+            root.destroy()
+
+    def test_a_phone_that_got_through_counts_after_it_has_gone_and_the_pc_never_does(self):
+        try:
+            root = tkinter.Tk()
+        except tkinter.TclError:
+            self.skipTest("no screen")
+        try:
+            root.withdraw()
+            window = gui.Window(root)
+            window.findings = netcheck.Findings(port=8790, listen="0.0.0.0", program=r"C:\Python312\python.exe",
+                                                default_ip="192.168.1.50", addresses=[netcheck.Address("192.168.1.50")])
+            window.companion = types.SimpleNamespace(visitors={"127.0.0.1": 300.0, "192.168.1.50": 200.0})
+            self.assertIsNone(window.phone_visit())  # the check's own probes and the page opened on the PC
+            window.companion.visitors.update({"192.168.1.77": 100.0, "192.168.1.78": 150.0})
+            self.assertEqual(window.phone_visit(), ("192.168.1.78", time.strftime("%H:%M:%S", time.localtime(150.0))))
         finally:
             root.destroy()
 
