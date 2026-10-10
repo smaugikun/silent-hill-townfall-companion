@@ -130,7 +130,8 @@ All hooks pass everything else through unchanged. Without the profile only the F
 
 ## Safety rules in the code
 
-- Memory that may be gone is read with `ReadProcessMemory` (`read_memory`): a failed read is an answer, not a crash.
+- The DLL reads and writes only its own process's memory, the game's objects. Memory that may be gone is checked with
+  `VirtualQuery` first (`read_memory`, `write_memory`): a failed read or write is an answer, not a crash.
 - The GPU copy is only added to the immediate command list, never on the game thread, never inside a render pass,
   never on a list that is executing, never with more than one GPU. Each case has a wait reason in the status.
 - A texture in an unknown resource state is refused (`source-state-unverified`), not guessed.

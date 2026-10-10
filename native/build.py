@@ -24,6 +24,7 @@ import game_profile  # noqa: E402
 
 BUILD = ROOT / "build"
 SHIPPED = REPO / "TownfallCompanion" / "Scripts" / "tf_native.dll"
+SOURCE = "https://github.com/smaugikun/silent-hill-townfall-companion"
 
 
 def header():
@@ -46,21 +47,64 @@ def header():
     return "\n".join(lines) + "\n"
 
 
-def compile_dll(source, output):
+def version_resource():
+    """The DLL's version information, as Windows shows it under Properties > Details: what it is, whose, which
+    version (config.VERSION), its license (the copyright line of LICENSE) and where its source is."""
+    numbers = ",".join([*config.VERSION.split("."), "0"][:4])
+    notice = next(line for line in (REPO / "LICENSE").read_text(encoding="utf-8").splitlines()
+                  if line.startswith("Copyright"))  # "Copyright (c) 2026 smaugikun"
+    strings = {
+        "CompanyName": notice.split(" ", 3)[-1],
+        "FileDescription": "Townfall Companion: the CRTV's picture and sound from the game, for the companion",
+        "FileVersion": config.VERSION,
+        "InternalName": "tf_native",
+        "LegalCopyright": f"{notice}. MIT License.",
+        "OriginalFilename": "tf_native.dll",
+        "ProductName": "Townfall Companion",
+        "ProductVersion": config.VERSION,
+        "Comments": f"Open source: {SOURCE}",
+    }
+    values = "\n".join(f'      VALUE "{key}", "{value}"' for key, value in strings.items())
+    return f"""1 VERSIONINFO
+FILEVERSION {numbers}
+PRODUCTVERSION {numbers}
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x2
+FILESUBTYPE 0x0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+{values}
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"""
+
+
+def compile_dll(source, output, *resources):
     vendor = ROOT / "vendor" / "minhook"
     # -s: no debug symbols, whose ID would carry where Zig keeps its build files: the same source gives the same DLL
     # wherever it is built.
     command = [str(Path(ziglang.__file__).parent / "zig.exe"), "cc", "-target", "x86_64-windows-gnu", "-std=c11", "-O2",
                "-s", "-shared", "-I", str(vendor / "include"), str(source),
                *(str(vendor / "src" / path) for path in ("buffer.c", "hook.c", "trampoline.c", "hde/hde64.c")),
-               "-lole32", "-o", str(output)]
+               *(str(path) for path in resources), "-lole32", "-o", str(output)]
     subprocess.run(command, check=True, cwd=ROOT)
 
 
 def main():
     (ROOT / "profile.h").write_text(header(), encoding="ascii", newline="\n")
     BUILD.mkdir(exist_ok=True)
-    compile_dll(ROOT / "tf_native.c", BUILD / "tf_native.dll")
+    (BUILD / "version.rc").write_text(version_resource(), encoding="ascii", newline="\n")
+    compile_dll(ROOT / "tf_native.c", BUILD / "tf_native.dll", BUILD / "version.rc")
     compile_dll(ROOT / "test_harness.c", BUILD / "tf_native_tests.dll")
     shutil.copy2(BUILD / "tf_native.dll", SHIPPED)
     print(f"Built {SHIPPED} and {BUILD / 'tf_native_tests.dll'} (fake-engine tests only, never installed)")

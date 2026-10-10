@@ -20,8 +20,9 @@ _Static_assert(sizeof(struct AlignmentPacket) == 40, "Alignment packet ABI");
 
 /* Writes memory that may be gone without crashing: a failed write is an answer. */
 static int write_memory(uintptr_t address, const void *source, SIZE_T size) {
-    SIZE_T written = 0;
-    return address && WriteProcessMemory(GetCurrentProcess(), (void *)address, source, size, &written) && written == size;
+    if (!accessible(address, size, 1)) return 0;
+    memcpy((void *)address, source, size);
+    return 1;
 }
 
 static double clamp_unit(double v) { return v < -1 ? -1 : v > 1 ? 1 : v; }

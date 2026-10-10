@@ -41,10 +41,28 @@ _Static_assert(sizeof(struct Source) == 40, "Lua source packet ABI");
 /* The radio's mini-game state, as JSON for the status: what the phone's buttons and pose act on. */
 static char radio_json[128] = "null";
 
+/* Whether the `size` bytes at `address` are memory of this process that may be read (or, with `write`, written).
+ * What the DLL reads and writes are the game's own objects, which may be gone: asking Windows first keeps a stale
+ * address from crashing the game. */
+static int accessible(uintptr_t address, SIZE_T size, int write) {
+    const DWORD writable = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    const DWORD readable = writable | PAGE_READONLY | PAGE_EXECUTE_READ;
+    uintptr_t end = address + size;
+    if (!address || end < address) return 0;
+    while (address < end) {
+        MEMORY_BASIC_INFORMATION region;
+        if (!VirtualQuery((const void *)address, &region, sizeof(region)) || region.State != MEM_COMMIT ||
+            (region.Protect & PAGE_GUARD) || !(region.Protect & (write ? writable : readable))) return 0;
+        address = (uintptr_t)region.BaseAddress + region.RegionSize;
+    }
+    return 1;
+}
+
 /* Reads memory that may be gone without crashing: a failed read is an answer. */
 static int read_memory(uintptr_t address, void *destination, SIZE_T size) {
-    SIZE_T read = 0;
-    return address && ReadProcessMemory(GetCurrentProcess(), (void *)address, destination, size, &read) && read == size;
+    if (!accessible(address, size, 0)) return 0;
+    memcpy(destination, (const void *)address, size);
+    return 1;
 }
 
 static uint64_t unix_ms(void) {

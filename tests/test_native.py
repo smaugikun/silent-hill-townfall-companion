@@ -77,6 +77,31 @@ class FmodNamesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(DLL.exists(), "tf_native.dll isn't built (py native/build.py)")
+class DllFileTest(unittest.TestCase):
+    """The DLL as a file: it says what it is, and it touches no process but the game's own."""
+
+    @classmethod
+    def setUpClass(cls):
+        import pefile
+        cls.image = pefile.PE(str(DLL))
+        cls.addClassCleanup(cls.image.close)
+
+    def test_it_says_what_it_is_and_which_version(self):
+        strings = {key.decode(): value.decode() for info in self.image.FileInfo[0] if hasattr(info, "StringTable")
+                   for table in info.StringTable for key, value in table.entries.items()}
+        self.assertEqual((strings["ProductName"], strings["OriginalFilename"]), ("Townfall Companion", "tf_native.dll"))
+        self.assertEqual((strings["FileVersion"], strings["ProductVersion"]), (config.VERSION, config.VERSION))
+        self.assertIn("MIT License", strings["LegalCopyright"])
+        self.assertIn("github.com/smaugikun/silent-hill-townfall-companion", strings["Comments"])
+
+    def test_it_reads_and_writes_no_other_process(self):
+        imported = {entry.name.decode() for library in self.image.DIRECTORY_ENTRY_IMPORT
+                    for entry in library.imports if entry.name}
+        self.assertFalse(imported & {"ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
+                                     "CreateRemoteThread", "VirtualAllocEx"}, imported)
+
+
+@unittest.skipUnless(DLL.exists(), "tf_native.dll isn't built (py native/build.py)")
 class DllTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
