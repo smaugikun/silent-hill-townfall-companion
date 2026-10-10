@@ -16,7 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 DLL = "TownfallCompanion/Scripts/tf_native.dll"
-# Besides the mod's folder, players get the notices and the guides the README links to.
+# Besides the mod's folder, players get the notices and the guides the README links to (not its pictures: those
+# are for the repository's and the mod page's README).
 DOCUMENTS = ("README.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/PHONE_SETUP.md",
              "docs/TROUBLESHOOTING.md", "docs/NATIVE_DLL.md")
 REQUIRED = ("TownfallCompanion/enabled.txt", "TownfallCompanion/Start Companion.py",
@@ -34,7 +35,7 @@ def git(*args):
 def chosen(commit="HEAD"):
     """The names in `commit` that go into the archive."""
     names = git("ls-tree", "-r", "--name-only", "-z", commit).decode("utf-8").split("\0")
-    return [name for name in names if name.startswith(("TownfallCompanion/", "docs/images/")) or name in DOCUMENTS]
+    return [name for name in names if name.startswith("TownfallCompanion/") or name in DOCUMENTS]
 
 
 def problems(names):

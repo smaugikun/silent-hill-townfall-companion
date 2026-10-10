@@ -17,6 +17,7 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(package.problems(names), [])
         self.assertIn("TownfallCompanion/companion/bridge.py", names)
         self.assertIn("docs/NATIVE_DLL.md", names)  # what the DLL does and doesn't, next to it
+        self.assertFalse([name for name in names if name.startswith("docs/images/")])  # the README's pictures stay online
         self.assertFalse([name for name in names if name.startswith(("tests/", "native/", "tools/")) or
                           name.endswith(("DEVELOPMENT.md", "NEXUS_PAGE.md", "requirements-dev.txt"))])
 
