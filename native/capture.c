@@ -44,6 +44,7 @@ static _Atomic unsigned captured_access;
 static _Atomic uint64_t queue_cpu_us, map_cpu_us;
 static _Atomic unsigned requested_fps, capture_fault;
 static _Atomic uint64_t config_tick, published_frames;
+static _Atomic uint64_t published_at;
 static uint64_t frame_sequence;
 static ULONGLONG next_capture_at;
 static int allocated_width, allocated_height;
@@ -72,10 +73,13 @@ static uint64_t elapsed_us(uint64_t began) {
 
 static const char *capture_status(void) {
     int phase = atomic_load(&capture_state);
-    if (phase >= 0 && atomic_load(&requested_fps)) return "streaming";
-    switch (atomic_load_explicit(&capture_state, memory_order_acquire)) {
+    ULONGLONG now = GetTickCount64();
+    if (phase >= 0 && atomic_load(&requested_fps) && atomic_load(&published_frames) &&
+        !atomic_load(&capture_wait_reason) && now - atomic_load(&published_at) <= 3000 &&
+        now - atomic_load(&config_tick) <= 3000) return "streaming";
+    switch (phase) {
         case 0: return "disabled";
-        case 1: return "armed";
+        case 1: return atomic_load(&capture_wait_reason) == 7 ? "waiting-for-source" : "armed";
         case 2: return "gpu-copy-pending";
         case 3: return "writing-frame";
         case 4: return "frame-ready";
@@ -136,7 +140,10 @@ static DWORD WINAPI make_pictures(void *unused) {
         WaitForSingleObject(picture_wake, INFINITE);
         int ok = publish_picture(shared_frame, frame_pixels, frame_width, frame_height, frame_format == PIXEL_BGRA8,
                                  frame_sequence);
-        if (ok) atomic_store(&published_frames, frame_sequence);
+        if (ok) {
+            atomic_store(&published_at, GetTickCount64());
+            atomic_store(&published_frames, frame_sequence);
+        }
         atomic_store_explicit(&capture_state, ok ? 4 : -3, memory_order_release);
     }
     return 0;
@@ -262,7 +269,7 @@ static void capture_at_frame_end(void *command_list) {
     atomic_store(&map_cpu_us, elapsed_us(began));
     if (atomic_load(&map_cpu_us) > 50000) atomic_store(&capture_fault, 1);
     if (fps) {
-        uint64_t pace_ms = 1000 / fps;
+        uint64_t pace_ms = (1000 + fps - 1) / fps;
         uint64_t budget_ms = (atomic_load(&queue_cpu_us) + atomic_load(&map_cpu_us)) / 100;
         if (budget_ms > pace_ms) pace_ms = budget_ms;
         next_capture_at = queued_at + pace_ms;

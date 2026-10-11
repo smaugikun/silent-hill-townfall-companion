@@ -91,10 +91,9 @@ END
 
 def compile_dll(source, output, *resources):
     vendor = ROOT / "vendor" / "minhook"
-    # -s: no debug symbols, whose ID would carry where Zig keeps its build files: the same source gives the same DLL
-    # wherever it is built.
+    # -s removes debug-symbol path differences for reproducible Windows builds with the same pinned toolchain/inputs.
     command = [str(Path(ziglang.__file__).parent / "zig.exe"), "cc", "-target", "x86_64-windows-gnu", "-std=c11", "-O2",
-               "-s", "-shared", "-I", str(vendor / "include"), str(source),
+               "-Wall", "-Wextra", "-Wshadow", "-s", "-shared", "-I", str(vendor / "include"), str(source),
                *(str(vendor / "src" / path) for path in ("buffer.c", "hook.c", "trampoline.c", "hde/hde64.c")),
                *(str(path) for path in resources), "-lole32", "-o", str(output)]
     subprocess.run(command, check=True, cwd=ROOT)

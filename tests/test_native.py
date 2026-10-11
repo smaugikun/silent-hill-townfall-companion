@@ -336,6 +336,31 @@ class FakeEngineTest(unittest.TestCase):
                 with self.subTest(scenario=scenario):
                     self.assertEqual(self.dll.crtv_test_look_packet(scenario, str(Path(folder) / "look.bin")), 1)
 
+    def test_failed_look_setup_removes_partial_hooks_and_reports_cleanup_failure(self):
+        function = self.dll.crtv_test_look_install
+        function.argtypes, function.restype = [ct.c_uint], ct.c_int
+        for scenario in range(10):  # each create/enable failure, failed cleanup, and successful setup
+            with self.subTest(scenario=scenario):
+                self.assertEqual(function(scenario), 1)
+
+    def test_looking_does_not_write_an_inaccessible_capture_rotation(self):
+        function = self.dll.crtv_test_look_inaccessible
+        function.argtypes, function.restype = [], ct.c_int
+        self.assertEqual(function(), 1)
+
+    def test_partial_audio_setup_cannot_silence_the_game(self):
+        function = self.dll.crtv_test_audio_setup
+        function.argtypes, function.restype = [ct.c_uint, ct.c_wchar_p], ct.c_int
+        with tempfile.TemporaryDirectory() as folder:
+            for scenario in range(5):  # each DSP attachment failure, pending group, and successful setup
+                with self.subTest(scenario=scenario):
+                    self.assertEqual(function(scenario, str(Path(folder) / "sound.bin")), 1)
+
+    def test_capture_reports_streaming_only_with_recent_frames_and_a_fresh_request(self):
+        function = self.dll.crtv_test_capture_status
+        function.argtypes, function.restype = [], ct.c_int
+        self.assertEqual(function(), 1)
+
 
 class PictureHeaderTest(unittest.TestCase):
     """What the bridge takes from the DLL's shared memory as the CRTV's picture, and what it refuses."""
@@ -588,6 +613,16 @@ class SharedSoundTest(unittest.TestCase):
         response = self.stream()
         self.assertEqual(response.status, 503)
         self.assertIn(b"no sound from the game", response.read())
+
+    def test_the_stream_stops_cleanly_when_its_audio_source_is_removed(self):
+        self.start(rate=48000)
+        handler = object.__new__(bridge.Handler)
+        handler.audio = self.audio
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = lambda *args: None
+        handler.wfile.flush = lambda: setattr(handler, "audio", None)
+        handler._stream_audio()
+        self.assertEqual(handler.wfile.getvalue(), b"TFAU" + struct.pack("<IH", 48000, 2))
 
     def test_the_stream_says_its_format_then_sends_the_sound_as_it_comes(self):
         self.start(rate=48000)

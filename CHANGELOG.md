@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Partial or failed native audio setup no longer silences the game's CRTV buses.
+- Failed look-hook setup removes the hooks it created and reports installation or cleanup failures separately.
+- CRTV camera rotation reads and writes now check page accessibility.
+- Capture reports streaming only after recent frames and a fresh request, and rounds capture intervals up.
+- Audio streams stop cleanly when their source is removed during shutdown.
+- Corrected DLL documentation about memory checks, system libraries, shared-memory copies, build reproduction
+  and game-update compatibility.
+
 ## 2.0.0
 
 A rewrite: the phone shows the game's own CRTV, live, instead of rebuilding it from files taken out of the game.
@@ -16,7 +26,8 @@ A rewrite: the phone shows the game's own CRTV, live, instead of rebuilding it f
   ⌖ lines it up with your character again.
 - Settings: show the game's CRTV on the monitor in VIEW, show it during fine tuning, silence the CRTV's sound in the
   game while the phone plays it, and the phone's own volume.
-- Game updates: the companion reads each new version of the game by itself, in a few seconds.
+- Compatible game updates: the companion reads the new game symbols and regenerates its profile in a few seconds;
+  missing symbols or incompatible changes can require a mod update.
 
 **Changed**
 

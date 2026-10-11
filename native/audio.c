@@ -76,6 +76,8 @@ static void *master_dsp;                 /* the DSP on the master bus, once ther
  * function is missing, -2 not FMOD 2, -3 no DSP could be made, -4 one couldn't be attached, -5 no hook on the update,
  * -6 no shared memory for the companion. */
 static int audio_state;
+/* Published only once every bus tap and the master publication DSP are attached. Partial setup must never mute. */
+static _Atomic int audio_ready;
 static int audio_rate;                   /* the mixer's sample rate */
 static unsigned audio_frames;
 static wchar_t buses_path[MAX_PATH];
@@ -225,7 +227,7 @@ static FmodResult tap_read(struct FmodDspState *dsp_state, float *in, float *out
     tap->energy += energy;
     tap->samples += (uint64_t)length * *outchannels;
     if (peak > tap->peak) tap->peak = peak;
-    if (!tap->phone) return FMOD_OK;
+    if (!tap->phone || !atomic_load(&audio_ready)) return FMOD_OK;
     mix_in(in, inchannels, length);
     if (GetTickCount64() < atomic_load(&audio_mute_until)) memset(out, 0, sizeof(float) * length * (unsigned)*outchannels);
     return FMOD_OK;
@@ -237,7 +239,7 @@ static FmodResult master_read(struct FmodDspState *dsp_state, float *in, float *
                               int *outchannels) {
     (void)dsp_state;
     pass_on(in, out, length, inchannels, outchannels);
-    publish_mix(length);
+    if (atomic_load(&audio_ready)) publish_mix(length);
     return FMOD_OK;
 }
 
@@ -339,11 +341,12 @@ static int attach_taps(void *core) {
         atomic_store(&tap_count, i + 1); /* the mixer may run it as soon as it is added */
         if (fmod_c.add_dsp(group, FMOD_DSP_HEAD, dsp) != FMOD_OK) { audio_state = -4; return 0; }
     }
-    if (master_dsp) return 1;
+    if (master_dsp) return atomic_load(&audio_ready);
     void *master = NULL;
     if (fmod_c.get_master_group(core, &master) != FMOD_OK || !master) return 0;
     if (fmod_c.create_dsp(core, &master_description, &master_dsp) != FMOD_OK) { audio_state = -3; return 0; }
     if (fmod_c.add_dsp(master, FMOD_DSP_HEAD, master_dsp) != FMOD_OK) { audio_state = -4; return 0; }
+    atomic_store(&audio_ready, 1);
     return 1;
 }
 
@@ -403,7 +406,7 @@ __declspec(dllexport) int tf_native_sound(void *lua_state) {
     struct SoundPacket packet = {0};
     if (!initialized || state < 0 || !read_packet(&sound_file, sound_path, &packet, sizeof(packet)) ||
         memcmp(packet.magic, "TFSOUND1", 8) || packet.mute > 1) return 0;
-    atomic_store(&audio_mute_until, packet.mute ? GetTickCount64() + AUDIO_MUTE_HOLD_MS : 0);
+    atomic_store(&audio_mute_until, packet.mute && atomic_load(&audio_ready) ? GetTickCount64() + AUDIO_MUTE_HOLD_MS : 0);
     return 0;
 }
 

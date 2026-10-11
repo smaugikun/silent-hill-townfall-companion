@@ -18,7 +18,7 @@ static _Atomic uint64_t alignment_calls;
 struct AlignmentPacket { char magic[8]; uint64_t radio; double x, y; uint64_t unix_ms; };
 _Static_assert(sizeof(struct AlignmentPacket) == 40, "Alignment packet ABI");
 
-/* Writes memory that may be gone without crashing: a failed write is an answer. */
+/* Rejects inaccessible pages before writing; page access does not establish that the radio is still alive. */
 static int write_memory(uintptr_t address, const void *source, SIZE_T size) {
     if (!accessible(address, size, 1)) return 0;
     memcpy((void *)address, source, size);

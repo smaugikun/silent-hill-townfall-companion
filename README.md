@@ -67,8 +67,9 @@ motion controls, no vibration, and the screen can't be kept on).
 and extract the new version over it. Your settings remain. If you're coming from 1.x, the `tools` and `cache`
 folders aren't used any more and can be deleted.
 
-**After a game update** there is nothing to do: the Companion reads the game's new version by itself the next time
-it starts.
+**After a compatible game update**, the Companion reads the new game symbols and regenerates its profile the next
+time it starts. Missing symbols or incompatible engine changes can require a mod update; see
+[DLL compatibility](docs/NATIVE_DLL.md#the-game-profile-surviving-game-updates).
 
 **Uninstalling:** delete `...\ue4ss\Mods\TownfallCompanion`.
 

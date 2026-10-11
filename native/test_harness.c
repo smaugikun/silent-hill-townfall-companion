@@ -1,5 +1,41 @@
 /* tf_native.c against a fake engine, for tests/test_native.py: built into tf_native_tests.dll, never installed. */
+#define MH_CreateHook test_create_hook
+#define MH_EnableHook test_enable_hook
+#define MH_RemoveHook test_remove_hook
 #include "tf_native.c"
+
+static void *test_hook_targets[4];
+static int test_hooks[4], test_created, test_enabled, test_removed;
+static int test_create_failure = -1, test_enable_failure = -1, test_remove_failure = -1;
+
+MH_STATUS WINAPI test_create_hook(LPVOID target, LPVOID detour, LPVOID *original) {
+    (void)detour;
+    int i = test_created++;
+    if (i == test_create_failure) return MH_ERROR_MEMORY_ALLOC;
+    test_hook_targets[i] = target;
+    test_hooks[i] = 1;
+    *original = target;
+    return MH_OK;
+}
+
+MH_STATUS WINAPI test_enable_hook(LPVOID target) {
+    int i = test_enabled++;
+    if (i == test_enable_failure) return MH_ERROR_MEMORY_ALLOC;
+    if (target != test_hook_targets[i] || !test_hooks[i]) return MH_ERROR_NOT_CREATED;
+    test_hooks[i] = 2;
+    return MH_OK;
+}
+
+MH_STATUS WINAPI test_remove_hook(LPVOID target) {
+    ++test_removed;
+    for (int i = 0; i < 4; ++i)
+        if (test_hook_targets[i] == target && test_hooks[i]) {
+            if (i == test_remove_failure) return MH_ERROR_MEMORY_ALLOC;
+            test_hooks[i] = 0;
+            return MH_OK;
+        }
+    return MH_ERROR_NOT_CREATED;
+}
 
 /* The fake engine's layout: a real profile of the game's, so the fakes below fit it. Loaded as the
  * DLL is: the code under test reads the same `profile`. */
@@ -52,6 +88,38 @@ static const struct GameProfile test_profile = {
 };
 
 __attribute__((constructor)) static void use_test_profile(void) { profile = test_profile; }
+
+/* Failure at each create/enable step, cleanup failure, or success. No partial hooks are silently accepted. */
+__declspec(dllexport) int crtv_test_look_install(unsigned scenario) {
+    memset(test_hooks, 0, sizeof(test_hooks));
+    memset(test_hook_targets, 0, sizeof(test_hook_targets));
+    test_created = test_enabled = test_removed = 0;
+    test_create_failure = scenario < 4 ? (int)scenario : -1;
+    test_enable_failure = scenario >= 4 && scenario <= 8 ? (scenario == 8 ? 2 : (int)scenario - 4) : -1;
+    test_remove_failure = scenario == 8 ? 0 : -1;
+    image_base = (unsigned char *)(uintptr_t)0x10000000;
+    install_look();
+    if (scenario == 9)
+        return look_ready && !strcmp(look_status, "ready") && test_enabled == 4 && !test_removed;
+    if (look_ready) return 0;
+    if (scenario == 8) return !strcmp(look_status, "hook-cleanup-failed") && test_hooks[0] && test_removed == 4;
+    for (int i = 0; i < 4; ++i) if (test_hooks[i]) return 0;
+    return !strcmp(look_status, "hook-install-failed") && test_removed == (scenario < 4 ? (int)scenario : 4);
+}
+
+/* Page checks reject inaccessible look rotations without applying or restoring through them. */
+__declspec(dllexport) int crtv_test_look_inaccessible(void) {
+    unsigned char *memory = VirtualAlloc(NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+    if (!memory) return 0;
+    atomic_store(&looking, 1);
+    atomic_store(&look_at, GetTickCount64());
+    double saved[4] = {0}, turned[4] = {0};
+    int ok = !turn_capture(memory, saved, turned);
+    restore_capture(memory, saved, turned);
+    atomic_store(&looking, 0);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    return ok;
+}
 
 /* A radio in the advanced mini-game's stabilise stage, its image at (0.5, -0.4). */
 static void fake_radio(unsigned char *radio) {
@@ -319,6 +387,7 @@ __declspec(dllexport) int crtv_test_audio_mix(const wchar_t *mapping) {
     wcsncpy(audio_mapping_name, mapping, sizeof(audio_mapping_name) / sizeof(audio_mapping_name[0]) - 1);
     audio_rate = 48000;
     if (!open_audio_shared()) return 0;
+    atomic_store(&audio_ready, 1);
     memset(taps, 0, sizeof(taps));
     for (int i = 0; i < 3; ++i) {
         snprintf(taps[i].path, sizeof(taps[i].path), "%s", paths[i]);
@@ -359,6 +428,7 @@ __declspec(dllexport) int crtv_test_audio_mute(unsigned scenario, const wchar_t 
     struct SoundPacket packet = {{'T', 'F', 'S', 'O', 'U', 'N', 'D', '1'}, 1};
     if (scenario == 3) packet.magic[0] = '?';
     initialized = state = 1;
+    atomic_store(&audio_ready, 1);
     close_packet(&sound_file); /* the last test's file */
     swprintf(sound_path, MAX_PATH, L"%ls", path);
     int ok = 1;
@@ -388,6 +458,7 @@ __declspec(dllexport) int crtv_test_audio_mute(unsigned scenario, const wchar_t 
          out[3] == (quiet ? 0 : .5f);
     close_packet(&sound_file);
     initialized = state = 0;
+    atomic_store(&audio_ready, 0);
     atomic_store(&audio_mute_until, 0);
     atomic_store(&tap_count, 0);
     memset(taps, 0, sizeof(taps));
@@ -397,12 +468,117 @@ __declspec(dllexport) int crtv_test_audio_mute(unsigned scenario, const wchar_t 
 }
 
 __declspec(dllexport) void crtv_test_audio_close(void) {
+    atomic_store(&audio_ready, 0);
     atomic_store(&tap_count, 0);
     memset(taps, 0, sizeof(taps));
     if (audio_shared) UnmapViewOfFile(audio_shared);
     if (audio_mapping) CloseHandle(audio_mapping);
     audio_shared = NULL;
     audio_mapping = NULL;
+}
+
+static int test_audio_adds, test_audio_failure, test_audio_wait;
+static int test_dsps[3];
+static FmodResult test_audio_group(void *bus, void **group) {
+    if (test_audio_wait && bus == &test_dsps[1]) { *group = NULL; return 1; }
+    *group = bus;
+    return FMOD_OK;
+}
+static FmodResult test_audio_create(void *core, const struct FmodDspDescription *description, void **dsp) {
+    (void)core; (void)description;
+    *dsp = &test_dsps[test_audio_adds];
+    return FMOD_OK;
+}
+static FmodResult test_audio_add(void *group, int index, void *dsp) {
+    (void)group; (void)index; (void)dsp;
+    return test_audio_adds++ == test_audio_failure ? 1 : FMOD_OK;
+}
+static FmodResult test_audio_master(void *core, void **group) {
+    (void)core;
+    *group = &test_dsps[2];
+    return FMOD_OK;
+}
+
+/* Failed first/second/master attachment and incomplete setup must leave the game's samples audible.
+ * Successful setup allows a mute request and publishes the tap's samples through the master callback. */
+__declspec(dllexport) int crtv_test_audio_setup(unsigned scenario, const wchar_t *path) {
+    memset(taps, 0, sizeof(taps));
+    memset(audio_mix, 0, sizeof(audio_mix));
+    audio_mixed = 0;
+    atomic_store(&audio_ready, 0);
+    atomic_store(&tap_count, 0);
+    atomic_store(&audio_mute_until, 0);
+    initialized = state = 1;
+    audio_state = 2;
+    taps_chosen = 2;
+    master_dsp = NULL;
+    for (int i = 0; i < 2; ++i) { taps[i].bus = &test_dsps[i]; taps[i].phone = 1; }
+    fmod_c.get_channel_group = test_audio_group;
+    fmod_c.create_dsp = test_audio_create;
+    fmod_c.add_dsp = test_audio_add;
+    fmod_c.get_master_group = test_audio_master;
+    test_audio_adds = 0;
+    test_audio_failure = scenario < 3 ? (int)scenario : -1;
+    test_audio_wait = scenario == 3;
+    int success = scenario == 4;
+    int ok = attach_taps(NULL) == success && atomic_load(&audio_ready) == success &&
+             audio_state == (scenario < 3 ? -4 : 2);
+    close_packet(&sound_file);
+    swprintf(sound_path, MAX_PATH, L"%ls", path);
+    struct SoundPacket packet = {{'T', 'F', 'S', 'O', 'U', 'N', 'D', '1'}, 1};
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    DWORD written = 0;
+    ok = ok && file != INVALID_HANDLE_VALUE && WriteFile(file, &packet, sizeof(packet), &written, NULL) &&
+         written == sizeof(packet);
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    tf_native_sound(NULL);
+    ok = ok && (atomic_load(&audio_mute_until) > GetTickCount64()) == success;
+    /* Even a deadline retained from a request must not allow a partial tap to mute. */
+    atomic_store(&audio_mute_until, GetTickCount64() + AUDIO_MUTE_HOLD_MS);
+    float in[2] = {.5f, -.5f}, out[2];
+    int channels = 2;
+    struct FmodDspState tap = {taps[0].dsp};
+    tap_read(&tap, in, out, 1, 2, &channels);
+    ok = ok && out[0] == (success ? 0 : .5f) && out[1] == (success ? 0 : -.5f) &&
+         audio_mixed == (success ? 1u : 0u);
+    close_packet(&sound_file);
+    atomic_store(&audio_ready, 0);
+    atomic_store(&audio_mute_until, 0);
+    atomic_store(&tap_count, 0);
+    memset(audio_mix, 0, sizeof(audio_mix));
+    audio_mixed = 0;
+    master_dsp = NULL;
+    taps_chosen = 0;
+    initialized = state = audio_state = 0;
+    return ok;
+}
+
+__declspec(dllexport) int crtv_test_capture_status(void) {
+    ULONGLONG now = GetTickCount64();
+    atomic_store(&capture_state, 1);
+    atomic_store(&requested_fps, 30);
+    atomic_store(&config_tick, now);
+    atomic_store(&published_at, now);
+    atomic_store(&published_frames, 0);
+    atomic_store(&capture_wait_reason, 7);
+    int ok = !strcmp(capture_status(), "waiting-for-source");
+    atomic_store(&capture_wait_reason, 0);
+    atomic_store(&capture_state, 2);
+    ok = ok && !strcmp(capture_status(), "gpu-copy-pending");
+    atomic_store(&published_frames, 1);
+    ok = ok && !strcmp(capture_status(), "streaming");
+    atomic_store(&published_at, now - 4000);
+    ok = ok && !strcmp(capture_status(), "gpu-copy-pending");
+    atomic_store(&published_at, now);
+    atomic_store(&config_tick, now - 4000);
+    ok = ok && !strcmp(capture_status(), "gpu-copy-pending");
+    atomic_store(&config_tick, now);
+    atomic_store(&capture_state, -1);
+    ok = ok && !strcmp(capture_status(), "gpu-timeout");
+    atomic_store(&capture_state, 0);
+    atomic_store(&requested_fps, 0);
+    atomic_store(&published_frames, 0);
+    return ok;
 }
 
 /* The texture: 16 x 8 RGBA, its left half red and its right half blue, its rows 20 pixels apart in the readback (the

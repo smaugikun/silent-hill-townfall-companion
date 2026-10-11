@@ -2,8 +2,8 @@
 -- while a phone watches, for the companion to send to the phone, moves the image in the alignment stages of the
 -- fine-tune mini-game (tf_alignment.lua), turns the CRTV's direction to where the phone looks (M.look), takes the
 -- CRTV's sound from the game's mixer for the phone and quiets the game's while the phone plays it (M.sound), and reads
--- the radio's mini-game state, which the game keeps where Lua can't reach. It works only with the game build it was
--- made for; otherwise it stays off.
+-- the radio's mini-game state, which the game keeps where Lua can't reach. Picture, look and alignment need a profile
+-- matching the running game; sound uses its already loaded FMOD libraries independently.
 --
 -- UE4SS gives a DLL no Lua C API, so values go through small files in %TEMP%: this module writes which texture is the
 -- CRTV's screen, which radio is the player's, and how often and how wide the phone wants the screen; the DLL writes its
@@ -93,8 +93,8 @@ local function readMiniGame(text)
     end
 end
 
--- The packets for the DLL go through files kept open: opening a file in %TEMP% waits for the virus scanner (4 to
--- 12 ms in the game, on the game thread), writing through an open handle doesn't. Each kind of packet has one size,
+-- The packets for the DLL go through files kept open to avoid repeated opens (measured at 4 to 12 ms with the local
+-- virus scanner, on the game thread). File I/O can still wait. Each kind of packet has one size,
 -- so it is rewritten in place. True once written.
 local packetFiles = {}
 local function send(path, packet)
@@ -153,6 +153,8 @@ function M.update()
     if not text:find("}", 1, true) then return end -- read while the DLL rewrote it: the next one comes in half a second
     readMiniGame(text)
     readAudio(text)
+    local lookStatus = text:match('"lookStatus"%s*:%s*"([^"]+)"')
+    if lookStatus then common.logChange("native look", "TF-NATIVE", "CRTV look: " .. lookStatus) end
     local status = text:match('"status"%s*:%s*"([^"]+)"')
     if status then
         status = status .. ", capture " .. (text:match('"captureStatus"%s*:%s*"([^"]+)"') or "?")
@@ -183,7 +185,7 @@ function M.sound(mute)
     if sound and send(soundPath, string.pack("<c8I8", "TFSOUND1", mute and 1 or 0)) then sound() end
 end
 
--- Whether the DLL is loaded (it may still stay off for another game build: its status says).
+-- Whether the DLL is loaded (picture/look/alignment may still wait for a matching game profile: its status says).
 function M.loaded()
     return update ~= nil
 end

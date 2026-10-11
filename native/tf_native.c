@@ -42,8 +42,7 @@ _Static_assert(sizeof(struct Source) == 40, "Lua source packet ABI");
 static char radio_json[128] = "null";
 
 /* Whether the `size` bytes at `address` are memory of this process that may be read (or, with `write`, written).
- * What the DLL reads and writes are the game's own objects, which may be gone: asking Windows first keeps a stale
- * address from crashing the game. */
+ * This checks page access, not Unreal object lifetime or type. Memory may also change after the check. */
 static int accessible(uintptr_t address, SIZE_T size, int write) {
     const DWORD writable = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
     const DWORD readable = writable | PAGE_READONLY | PAGE_EXECUTE_READ;
@@ -58,7 +57,7 @@ static int accessible(uintptr_t address, SIZE_T size, int write) {
     return 1;
 }
 
-/* Reads memory that may be gone without crashing: a failed read is an answer. */
+/* Rejects inaccessible pages before reading. It cannot guarantee object lifetime between the check and copy. */
 static int read_memory(uintptr_t address, void *destination, SIZE_T size) {
     if (!accessible(address, size, 0)) return 0;
     memcpy(destination, (const void *)address, size);
@@ -123,16 +122,16 @@ static void report(const char *status, int width, int height, unsigned format) {
     int length = snprintf(body, sizeof(body),
         "{\"status\":\"%s\",\"width\":%d,\"height\":%d,\"format\":%u,\"captureStatus\":\"%s\",\"captureWait\":\"%s\","
         "\"requestedFps\":%u,\"frames\":%llu,\"viewportCalls\":%llu,\"trackedAccess\":%u,\"queueMs\":%.3f,\"mapMs\":%.3f,"
-        "\"alignmentResult\":%u,\"alignmentCalls\":%llu,\"look\":%s,\"looking\":%s,\"lookYaw\":%.1f,"
+        "\"alignmentResult\":%u,\"alignmentCalls\":%llu,\"look\":%s,\"lookStatus\":\"%s\",\"looking\":%s,\"lookYaw\":%.1f,"
         "\"audio\":%d,\"audioRate\":%d,\"audioBuses\":%d,\"audioLevels\":\"%s\",\"audioFrames\":%lld,\"audioMuted\":%d,\"radio\":%s}",
         status, width, height, format, capture_status(), capture_wait_status(),
         atomic_load(&requested_fps), (unsigned long long)atomic_load(&published_frames),
         (unsigned long long)atomic_load(&viewport_calls), atomic_load(&captured_access),
         atomic_load(&queue_cpu_us) / 1000.0, atomic_load(&map_cpu_us) / 1000.0,
         atomic_load(&alignment_result), (unsigned long long)atomic_load(&alignment_calls),
-        look_ready ? "true" : "false", looks ? "true" : "false", atomic_load(&look_yaw),
+        look_ready ? "true" : "false", look_status, looks ? "true" : "false", atomic_load(&look_yaw),
         audio_state, audio_rate, bus_count, levels, audio_shared_frames(),
-        GetTickCount64() < atomic_load(&audio_mute_until), radio_json);
+        atomic_load(&audio_ready) && GetTickCount64() < atomic_load(&audio_mute_until), radio_json);
     if (length < 0 || length >= (int)sizeof(body)) return;
     memset(body + length, ' ', sizeof(body) - (size_t)length);
     if (status_file == INVALID_HANDLE_VALUE)

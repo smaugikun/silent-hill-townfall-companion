@@ -180,10 +180,15 @@ In VIEW the phone shows the game's own CRTV screen, fine tuning included, as lon
 `UE4SS.log` says what the mod's native part is doing in lines starting with `[TF-NATIVE]`: `tf_native.dll loaded`,
 then `rhi-source-identified, capture streaming` while the picture goes to the phone.
 
-After a game update, the companion reads the game's new version once as it starts, in a few seconds. Until then the
-log says `waiting-for-game-profile` (or `game-profile-for-another-version`), and the picture comes as soon as it is
-done, also while you play. If the companion's window says the CRTV's picture can't be streamed, see the next
-section.
+After a compatible game update, the companion reads the game's new version once as it starts, in a few seconds.
+Until then the log says `waiting-for-game-profile` (or `game-profile-for-another-version`), and the picture comes as soon as it is
+done, also while you play. Missing symbols or incompatible engine changes can require a mod update. If the
+companion's window says the CRTV's picture can't be streamed, see the next section.
+
+`capture armed`, `waiting-for-source` or `gpu-copy-pending` can appear before the first picture. `streaming`
+requires a recent picture and a fresh request; the status page also shows why capture is waiting. A
+`CRTV look: hook-install-failed` or `hook-cleanup-failed` line means looking with the phone is disabled even if
+picture capture works. Restart the game and check for a newer mod version if it persists.
 
 ### The companion says "The CRTV's picture can't be streamed"
 

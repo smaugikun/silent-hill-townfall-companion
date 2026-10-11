@@ -604,7 +604,8 @@ class Handler(SimpleHTTPRequestHandler):
         """The game's sound as it comes (static/audio-stream.js): "TFAU", the sample rate (uint32) and the channels
         (uint16), little-endian, then 16-bit samples, interleaved. It ends when no sound has come for STREAM_IDLE_S
         (the game closed or paused its mixer) or the format changes (a game started anew): the phone opens it again."""
-        said = self.audio.format() if self.audio else None
+        audio = self.audio
+        said = audio.format() if audio else None
         if not said:
             return self._json({"ok": False, "error": "no sound from the game"}, 503)
         self.close_connection = True
@@ -617,8 +618,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(b"TFAU" + struct.pack("<IH", *said))
             self.wfile.flush()
-            while time.time() - heard_at < STREAM_IDLE_S and self.audio.format() == said:
-                data, position = self.audio.read(position)
+            while time.time() - heard_at < STREAM_IDLE_S and self.audio is audio and audio.format() == said:
+                data, position = audio.read(position)
                 if data:
                     self.wfile.write(data)
                     self.wfile.flush()

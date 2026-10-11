@@ -23,6 +23,7 @@ static RadarSpaceFn original_radar_space;
 static RadarUpdateFn original_radar_update;
 static CaptureUpdateFn original_capture_update;
 static int look_ready;
+static const char *look_status = "waiting-for-game-profile";
 static wchar_t look_path[MAX_PATH];
 static HANDLE look_file = INVALID_HANDLE_VALUE;
 static uint64_t look_seq;
@@ -103,22 +104,23 @@ static void aim_rotation(double yaw, double pitch, double *out) {
 static int turn_capture(unsigned char *capture, double *saved, double *turned) {
     double radians, facing = atomic_load(&facing_yaw);
     if (!capture || !look_offset(&radians)) return 0;
-    double *rotation = (double *)(capture + COMPONENT_TO_WORLD_OFFSET);
-    memcpy(saved, rotation, 4 * sizeof(double));
+    uintptr_t rotation = (uintptr_t)capture + COMPONENT_TO_WORLD_OFFSET;
+    if (!read_memory(rotation, saved, 4 * sizeof(double))) return 0;
     if (isnan(facing)) {
         double ahead[3] = {1, 0, 0}, forward[3];
         quat_rotate(saved, ahead, forward);
         facing = atan2(forward[1], forward[0]);
     }
     aim_rotation(facing + radians, atomic_load(&look_pitch) * 3.14159265358979323846 / 180, turned);
-    memcpy(rotation, turned, 4 * sizeof(double));
-    return 1;
+    return write_memory(rotation, turned, 4 * sizeof(double));
 }
 
 /* Puts the capture's rotation back, unless the game itself moved it during the call. */
 static void restore_capture(unsigned char *capture, const double *saved, const double *turned) {
-    double *rotation = (double *)(capture + COMPONENT_TO_WORLD_OFFSET);
-    if (!memcmp(rotation, turned, 4 * sizeof(double))) memcpy(rotation, saved, 4 * sizeof(double));
+    uintptr_t rotation = (uintptr_t)capture + COMPONENT_TO_WORLD_OFFSET;
+    double current[4];
+    if (read_memory(rotation, current, sizeof(current)) && !memcmp(current, turned, sizeof(current)))
+        write_memory(rotation, saved, sizeof(current));
 }
 
 /* Get2DAngleBetweenVectors(facing, towards the signal): for the CRTV's two calls, the facing turned by the phone's
@@ -142,7 +144,8 @@ static void *look_radar_space(void *radio, double *out) {
 }
 
 static void look_radar_update(void *radio) {
-    unsigned char *capture = *(unsigned char **)((unsigned char *)radio + RADIO_CAPTURE_OFFSET);
+    unsigned char *capture = NULL;
+    read_memory((uintptr_t)radio + RADIO_CAPTURE_OFFSET, &capture, sizeof(capture));
     double saved[4], turned[4];
     radio_capture = capture;
     int turns = turn_capture(capture, saved, turned);
@@ -169,12 +172,21 @@ static void install_look(void) {
         {RADAR_UPDATE_RVA, look_radar_update, (void **)&original_radar_update},
         {CAPTURE_UPDATE_RVA, look_capture_update, (void **)&original_capture_update},
     };
-    int ok = 1;
-    for (size_t i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i)
-        ok = ok && MH_CreateHook(image_base + hooks[i].rva, hooks[i].detour, hooks[i].original) == MH_OK;
-    for (size_t i = 0; i < sizeof(hooks) / sizeof(hooks[0]); ++i)
-        ok = ok && MH_EnableHook(image_base + hooks[i].rva) == MH_OK;
-    look_ready = ok;
+    size_t created = 0, count = sizeof(hooks) / sizeof(hooks[0]);
+    look_ready = 0;
+    for (; created < count; ++created)
+        if (MH_CreateHook(image_base + hooks[created].rva, hooks[created].detour, hooks[created].original) != MH_OK)
+            goto failed;
+    for (size_t i = 0; i < count; ++i)
+        if (MH_EnableHook(image_base + hooks[i].rva) != MH_OK) goto failed;
+    look_ready = 1;
+    look_status = "ready";
+    return;
+failed:
+    look_status = "hook-install-failed";
+    /* RemoveHook disables an enabled hook before removing it. The DLL stays pinned even if cleanup fails. */
+    while (created)
+        if (MH_RemoveHook(image_base + hooks[--created].rva) != MH_OK) look_status = "hook-cleanup-failed";
 }
 
 /* Right after tf_native.lua wrote a look packet, on the game thread. */

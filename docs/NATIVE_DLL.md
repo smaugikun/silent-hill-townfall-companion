@@ -12,10 +12,12 @@ Source: `native/`. Shipped as `TownfallCompanion/Scripts/tf_native.dll` (built, 
 
 - **No network.** It uses none of Windows' networking functions: its import table lists only `KERNEL32`, `ole32`
   (for the JPEG encoder) and the C runtime. The phone's page comes from the companion, not from the DLL.
-- **Nothing outside the game.** It runs only inside the game's own process, loaded by the mod's Lua script. It opens
-  no other program and loads no other library: FMOD's functions come from the game's own FMOD, already loaded.
-- **Nothing on disk changes.** It writes only its own small files in `%TEMP%` (its status, and the list of the game's
-  sound buses) and two blocks of shared memory for the companion. The game's files stay as they are.
+- **No additional program.** The mod's Lua script loads it into the game's process. It uses Windows system
+  components, including WIC through COM for JPEG encoding, which can load system DLLs. FMOD's functions come from
+  the game's own FMOD libraries, already loaded.
+- **No game files are changed.** The DLL writes its status and sound-bus list in `%TEMP%`, and picture and audio
+  data in two shared-memory blocks. Lua writes the command packets in `%TEMP%`; the companion separately writes
+  the mod's profile and settings.
 - **In the running game, and only while it runs,** it changes: the first bytes of the functions it hooks (MinHook's
   jumps), the position of the picture during fine tuning when the phone moves it, the CRTV camera's aim for the
   moment the game draws it, and the CRTV's sound in the game while the phone plays it.
@@ -42,14 +44,14 @@ functions, and every value travels in a small binary file in `%TEMP%` that Lua w
 | Export | Called by | Reads | Does |
 |---|---|---|---|
 | `tf_native_init` | `tf_native.lua`, once | — | pins itself in memory (a Lua reload must not unload hooked code), starts the sound tap, loads the profile, installs the hooks |
-| `tf_native_update` | `tf_native.lua`, every 0.5 s, game thread | `townfall-companion-native-source.bin` | takes the CRTV texture Lua found, the phone's fps and width, the radio's fine tuning state; retries the profile every 5 s; writes the status |
+| `tf_native_update` | `tf_native.lua`, every 0.5 s, game thread | `townfall-companion-native-source.bin` | processes the source and reports status at most once a second; takes the CRTV texture, fps, width and radio state; retries the profile every 5 s |
 | `tf_native_align` | `tf_alignment.lua` | `townfall-companion-native-align.bin` | moves the fine tuning picture once |
 | `tf_native_look` | `tf_native.lua` | `townfall-companion-native-look.bin` | takes where the phone looks |
 | `tf_native_sound` | `tf_native.lua` | `townfall-companion-native-sound.bin` | silences (6 s, renewed) or restores the CRTV's sound in the game |
 | `tf_native_state`, `tf_native_validate` | the tests only | — | the state; a profile checked against a game image |
 
-The packet files stay open on both sides and are rewritten in place: opening a file in `%TEMP%` waits for the virus
-scanner (milliseconds, on the game thread), reading through an open handle doesn't. Each packet starts with an
+The packet files stay open on both sides and are rewritten in place. Reusing handles avoids repeated opens, which
+were measured taking milliseconds on the game thread with the local virus scanner. File I/O can still wait. Each packet starts with an
 8-byte magic and has a fixed size (checked with `_Static_assert`):
 
 | Packet | Magic | Size | Content |
@@ -61,7 +63,8 @@ scanner (milliseconds, on the game thread), reading through an open handle doesn
 
 ## What it hands to the companion
 
-Two named shared-memory blocks, read by the companion's Python (no files, no copies):
+Two named shared-memory blocks carry picture and audio data without intermediate media files. The native code
+copies data into them, and Python copies the JPEG and samples into its own objects for streaming:
 
 **`Local\TownfallCompanionPicture`** (`crtv_native.py`): the latest picture.
 
@@ -83,27 +86,29 @@ The companion streams the picture at `/api/crtv/stream` and the sound at `/api/a
 channels + raw 16-bit samples).
 
 **Status:** `%TEMP%\townfall-companion-native.json`, rewritten in place (padded to 2048 bytes), once a second:
-the state, the capture's state and why it waits, frames published, timings, the look, the sound's state, rate,
+the state, the capture's state and why it waits, frames published, timings, the look and `lookStatus`, the sound's state, rate,
 buses and levels, and the radio's fine tuning state. `tf_native.lua` logs it as `[TF-NATIVE]` / `[TF-AUDIO]` lines
 when it changes, and the companion serves it at `/api/crtv/status`. `%TEMP%\townfall-companion-native-buses.txt`
 lists the game's FMOD buses, the tapped ones marked.
 
 ## The game profile: surviving game updates
 
-Every engine function the DLL calls or hooks, and every structure member it reads, moves with each game build.
-None of it is hard-coded. Instead:
+Engine addresses, member offsets and enum values can change between game builds. The production DLL obtains these
+values from a game profile instead of fixed addresses. It still relies on specific signatures, structure layouts,
+rendering behavior and the CRTV crop described below:
 
 1. The game ships its debug symbols, `Townfall-Win64-Shipping.pdb`, next to its executable.
 2. At start, the companion (`game_profile.py`, through Windows' `dbghelp.dll` in `game_symbols.py`) checks whether
    `Scripts\tf_native.profile` fits the installed game. If not (a game update), it reads the PDB once: about 4.5 s,
    in a separate low-priority process.
-3. It checks everything the DLL takes for granted: each function's exact signature (`SIGNATURES`), each member's
-   offset and size, each enum value. If the update changed any of that, no profile is written and the companion
+3. It checks the required function signatures (`SIGNATURES`) and selected structure layout and size assumptions,
+   and looks up the required member offsets and enum values. Compatible offset and enum-value changes go into the
+   new profile. If the symbols are missing or a checked assumption is incompatible, no new profile is written and the companion
    says *The CRTV's picture can't be streamed to the phone*. `py TownfallCompanion/companion/game_profile.py --show`
    says what changed.
 4. The DLL loads the profile (`TFPROF01`, version 1, 436 bytes) and checks it against the running game: build
    timestamp, image size, the PDB identity (CodeView GUID and age), and the first 16 bytes of every function it
-   will call. Any difference and it stays off.
+   will call. A mismatch leaves picture capture, looking and alignment off; audio is independent of the profile.
 5. Until a fitting profile is there, the DLL retries every 5 seconds, so a profile written mid-game is picked up.
 
 The sound needs no profile: FMOD's functions are found by name in the game's `fmod.dll` / `fmodstudio.dll`.
@@ -112,8 +117,10 @@ The sound needs no profile: FMOD's functions are found by name in the game's `fm
 a macro per value (`END_VIEWPORT_RVA` → `profile.end_viewport_rva`), and the list of functions whose first bytes
 are checked. Change `FIELDS`, and bump `game_profile.VERSION`.
 
-**When a game update needs a mod update:** only when it changed a signature, a member the DLL reads, or an enum
-value it uses. Then: adjust the code that uses it, update `SIGNATURES`/`FIELDS`, rebuild, test.
+**When a game update needs a mod update:** when required symbols disappear, a signature or checked layout becomes
+incompatible, or behavior the profile cannot describe changes (for example the CRTV crop or audio-bus paths).
+Compatible address, offset and enum-value changes can be handled by generating a new profile. For incompatible
+changes, adjust the relevant code and `SIGNATURES`/`FIELDS`, rebuild and test.
 
 ## The hooks
 
@@ -127,25 +134,36 @@ value it uses. Then: adjust the code that uses it, update `SIGNATURES`/`FIELDS`,
 | the scene capture's update | game | the CRTV's camera, aimed where the phone looks, then put back |
 
 All hooks pass everything else through unchanged. Without the profile only the FMOD hook exists.
+If a look hook cannot be installed, the DLL attempts to remove all the look hooks it created. Picture capture can
+continue, but `look` is false and `lookStatus` reports `hook-install-failed`. If MinHook also fails to remove a hook,
+`lookStatus` reports `hook-cleanup-failed`; phone looking stays disabled and the DLL remains pinned.
 
 ## Safety rules in the code
 
-- The DLL reads and writes only its own process's memory, the game's objects. Memory that may be gone is checked with
-  `VirtualQuery` first (`read_memory`, `write_memory`): a failed read or write is an answer, not a crash.
+- The DLL reads and writes memory in its own process. Selected reads and writes, including the CRTV camera rotation,
+  check page accessibility with `VirtualQuery` first (`read_memory`, `write_memory`) and reject inaccessible pages.
+  This does not establish Unreal object lifetime or type, prevent memory changing after the check, or guarantee
+  that native code cannot crash. See [VirtualQuery](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualquery).
 - The GPU copy is only added to the immediate command list, never on the game thread, never inside a render pass,
   never on a list that is executing, never with more than one GPU. Each case has a wait reason in the status.
 - A texture in an unknown resource state is refused (`source-state-unverified`), not guessed.
 - One copy in flight. An unfinished copy is never freed; after 5 s without the GPU finishing it, capture stops
   (`gpu-timeout`) rather than risk it.
-- Capture is paced: at most the phone's fps (≤ 30), and slower if its own CPU time would exceed a tenth of the time.
-  Over 50 ms for one step stops it (`capture-too-slow`).
+- Capture is paced at the phone's requested fps (≤ 30), with intervals rounded up to whole milliseconds. It slows
+  down when measured GPU-queue and readback CPU time would exceed a tenth of the interval. This budget excludes
+  JPEG encoding on the picture thread. A queue or readback step over 50 ms stops capture (`capture-too-slow`).
 - Only RGBA8/BGRA8 textures up to 2048×2048.
-- The FMOD DSPs pass every block on unchanged; muting writes silence only into the CRTV's own buses.
+- FMOD DSPs pass blocks on unchanged until all taps and the master publication DSP are attached. Partial or failed
+  setup cannot mute the game. Once ready, muting writes silence only into buses selected for the phone's CRTV audio,
+  including waypoint dialogue and transmissions. Existing taps remain attached in pass-through mode if setup fails.
 
 ## States and what they mean
 
-The DLL's `state`: `1` running with a fitting profile; `0` waiting for one (sound runs anyway); below 0 off:
-`-1` the game isn't there, `-3` couldn't pin itself, `-4` a hook couldn't be installed, `-5` no usable temp or DLL path.
+The DLL's `state`: `1` picture capture and alignment initialized with a fitting profile; `0` waiting for one
+(sound is independent); below 0 initialization failed: `-1` the game isn't there, `-3` couldn't pin itself,
+`-4` MinHook or the viewport hook couldn't be initialized, `-5` no usable temp or DLL path. Audio already installed
+before a viewport-hook failure can remain attached; new mute commands are refused. Looking has its own `look`
+boolean and `lookStatus`: `waiting-for-game-profile`, `ready`, `hook-install-failed`, or `hook-cleanup-failed`.
 
 Status strings (`[TF-NATIVE]` lines):
 
@@ -155,10 +173,12 @@ Status strings (`[TF-NATIVE]` lines):
 | `game-profile-for-another-version` | a profile is there, but for another game build |
 | `waiting-for-crtv-source` | running; no CRTV texture from Lua (CRTV down, no phone) |
 | `invalid-source`, `rhi-source-not-ready` | Lua named a texture that isn't (yet) a live GPU texture |
-| `rhi-source-identified` | the texture is found: capture runs while a phone watches |
+| `rhi-source-identified` | a texture resource was read; check `captureStatus`, `captureWait` and fresh frames to confirm streaming |
 | `hook-install-failed`, `game-not-present` | off |
 
-Capture states: `streaming`, `disabled`, `gpu-copy-pending`, `frame-ready`; problems: `gpu-timeout`,
+`streaming` requires a fresh capture request, a picture published within the last 3 seconds, and no current wait
+reason. It describes recent output, not a guarantee that the next GPU copy will finish.
+Other capture states: `disabled`, `armed`, `waiting-for-source`, `gpu-copy-pending`, `writing-frame`, `frame-ready`; problems: `gpu-timeout`,
 `source-state-unverified`, `picture-failed`, `unsupported-format`, `readback-map-failed`, `allocation-failed`,
 `capture-too-slow`, `shared-memory-failed`, `source-dimensions-changed`.
 
@@ -193,15 +213,16 @@ py native/build.py
 copies the DLL to `TownfallCompanion/Scripts/`, and writes the installed game's profile if it needs one. The C
 runtime is Windows' own (UCRT).
 
-The build is reproducible: the same source gives a byte-identical DLL in any environment (checked with two separate
-Python environments: the same SHA-256). So a release's DLL can be checked against its source: check out the release's
-tag, run `py native/build.py`, and compare the SHA-256 of `TownfallCompanion/Scripts/tf_native.dll` with the one in
-the release notes. That needs `-s`: with
+The Windows build has been reproduced byte-for-byte using the pinned Zig toolchain and the same source and build
+inputs, including builds from separate Python environments. This is not a guarantee across arbitrary compiler
+versions or platforms. To check a release's DLL against its source, check out the release tag, install the pinned
+requirements, run `py native/build.py`, and compare the DLL's SHA-256 with a published DLL hash, if one is provided
+(the release archive's hash is different). The build uses `-s`: with
 debug symbols, the linker stamps the DLL with an ID of its symbol file, which records where Zig keeps its build files,
 and that differs between environments (the code was the same; 20 bytes of timestamp and ID weren't).
 
-To check for problems the compiler can see: add `-Wall -Wextra -Wshadow` to the command in `compile_dll`; the
-code builds without warnings.
+The build enables `-Wall -Wextra -Wshadow` to report problems the compiler can see. These warning flags are also
+used for the fake-engine test DLL.
 
 ## Testing
 
@@ -213,7 +234,8 @@ code builds without warnings.
   reader agrees with `pefile`, an unreadable file is reported, a changed function signature gives no profile.
 - **The fake-engine tests** (`tf_native_tests.dll` from `test_harness.c`, which includes `tf_native.c`): the
   capture's state machine and every refusal case, the picture's crop and scale, the FMOD tap (rank, pass-through,
-  nesting, mixing, muting), the look's turning, the alignment's packets.
+  nesting, mixing, muting and partial setup failures), the look's turning, inaccessible rotation memory and hook
+  installation/cleanup failures, the alignment's packets, and capture status freshness.
 - **FMOD's names**: every library and function `audio.c` asks for is exported by the game's FMOD.
 
 The game-dependent tests are skipped when the game isn't installed.
