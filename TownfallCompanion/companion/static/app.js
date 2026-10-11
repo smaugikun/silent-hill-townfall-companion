@@ -323,8 +323,8 @@ function goFullScreen() {
 // --- Sound only on the phone ---
 //
 // While the game's sound comes through to the phone, the phone asks the game every 2 s to keep its own quiet
-// (tf_audio.lua); the game gives it back 5 s after the last request, so a phone that closes or drops off the Wi-Fi
-// leaves the game audible.
+// (tf_audio.lua). Hiding the page asks for the sound back immediately; if the phone loses power or Wi-Fi,
+// the game gives it back 5 s after the last request.
 const GAME_SOUND_REQUEST_MS = 2000;
 let gameSoundAsked = false, soundWasPlaying = false;
 
@@ -339,6 +339,9 @@ function requestGameSound() {
   gameSoundAsked = quiet;
 }
 setInterval(requestGameSound, GAME_SOUND_REQUEST_MS);
+// Screen-off can suspend timers before their next tick. Send the unmute while the browser still lets
+// the hidden page's keepalive request go out (util.js).
+document.addEventListener("visibilitychange", requestGameSound);
 
 // --- Text on the CRT ---
 

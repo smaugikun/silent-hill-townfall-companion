@@ -7,6 +7,7 @@
 - CRTV camera rotation reads and writes now check page accessibility.
 - Capture reports streaming only after recent frames and a fresh request, and rounds capture intervals up.
 - Audio streams stop cleanly when their source is removed during shutdown.
+- Hiding or locking the phone's page requests PC sound immediately, without waiting for a timer.
 - Corrected DLL documentation about memory checks, system libraries, shared-memory copies, build reproduction
   and game-update compatibility.
 

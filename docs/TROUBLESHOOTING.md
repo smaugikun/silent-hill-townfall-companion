@@ -145,6 +145,11 @@ comes through to the phone: the CRTV, the voices heard through it, the waypoints
 the CRTV's videos. Everything else stays in the game: your character's own voice, the story's cutscenes, the world.
 The *Phone volume* slider sets the phone's own sound; the game's volume settings set it too.
 
+When the phone's screen locks or its page becomes hidden, the page immediately asks the game to play the CRTV
+sound on the PC again. If the phone loses power or Wi-Fi and cannot send that request, the game restores its
+sound about 5 seconds after the last phone request. The DLL also restores sound after 6 seconds without a
+renewed mute command from the mod.
+
 ### The CRTV doesn't show on the monitor in VIEW
 
 That is the default: in VIEW the game's CRTV is switched on without its raise animation, so its voices and
