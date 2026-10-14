@@ -197,7 +197,7 @@ class BridgeRecoveryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             folder = Path(name); telemetry = folder / "townfall-companion-telemetry.json"
             inventory = bridge.ipc_files(telemetry)
-            self.assertEqual(len(inventory), 22)
+            self.assertEqual(len(inventory), 23)
             for path in inventory:
                 path.write_text("{}")
             other = folder / "unrelated.bin"; other.write_bytes(b"keep")

@@ -1188,6 +1188,32 @@ class CutsceneTest(ModTest):
         self.assertEqual(self.world.staticFindCalls, before)
 
 
+class DialMarksTest(ModTest):
+    """Marks another mod puts on the CRTV's dial go to the phone with the telemetry (tf_marks.lua)."""
+
+    def setUp(self):
+        super().setUp()
+        self.marks_file = self.tmp / "townfall-companion-dial-marks.txt"
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z)
+
+    def test_the_marks_go_to_the_phone_and_a_half_written_file_keeps_them(self):
+        self.marks_file.write_text("TFMARKS1 2\n0.016000 1.000 0.000 1.000\n0.080000 1.000 0.000 1.000\n")
+        self.world.tick(1)
+        magenta = [1, 0, 1]
+        self.assertEqual(self.telemetry()["dialMarks"],
+                         [{"frequency": 0.016, "colour": magenta}, {"frequency": 0.08, "colour": magenta}])
+        self.marks_file.write_text("TFMARKS1 2\n0.5")  # read while the mod rewrote it
+        self.world.tick(2)
+        self.assertEqual(len(self.telemetry()["dialMarks"]), 2)
+        self.marks_file.write_text("TFMARKS1 0\n")
+        self.world.tick(2)
+        self.assertEqual(self.telemetry()["dialMarks"], [])
+
+    def test_without_the_file_there_are_none(self):
+        self.world.tick(2)
+        self.assertEqual(self.telemetry()["dialMarks"], [])
+
+
 class NoRadioRequestsTest(ModTest):
     options = {"noRadioRequests": True}
 

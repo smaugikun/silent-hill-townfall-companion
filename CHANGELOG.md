@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.2
+
+- The phone's dial shows the marks other mods put on the game's dial.
+
 ## 2.0.1
 
 - Fixed sound issues on the phone, with a new setting to remove the CRTV's hum.

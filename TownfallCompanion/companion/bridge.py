@@ -172,6 +172,7 @@ def ipc_files(telemetry_file):
              "townfall-companion-native-source.bin", "townfall-companion-native-align.bin",
              "townfall-companion-native-look.bin", "townfall-companion-native-sound.bin",
              "townfall-companion-native.json", "townfall-companion-native-buses.txt",
+             "townfall-companion-dial-marks.txt",
              "townfall-companion-crtv-crop.json", "townfall-companion-native-keys.bin",
              "townfall-companion-native-key-owner.bin"]
     return [Path(telemetry_file), *(folder / name for name in names)]
@@ -249,7 +250,7 @@ def merge_telemetry(payload):
         for key in ("player", "crtv", "audio"):
             if isinstance(payload.get(key), dict):
                 telemetry.setdefault(key, {}).update(payload[key])
-        for key in ("enemies", "signals"):
+        for key in ("enemies", "signals", "dialMarks"):
             if isinstance(payload.get(key), list):
                 telemetry[key] = payload[key]
         if "cutscene" in payload:  # null when there is none: replaced, not merged

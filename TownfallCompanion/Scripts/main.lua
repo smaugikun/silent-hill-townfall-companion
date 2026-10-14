@@ -1,7 +1,8 @@
 -- Townfall Companion - UE4SS mod entry point.
 --
 -- Tracks the local player (tf_player), nearby enemies (tf_enemies), the CRTV (tf_crtv), its active
--- waypoints (tf_signals) and the cutscene playing (tf_cutscene), and writes them to
+-- waypoints (tf_signals), the cutscene playing (tf_cutscene) and marks another mod puts on the CRTV's dial
+-- (tf_marks), and writes them to
 -- %TEMP%\townfall-companion-telemetry.json for the companion's bridge (UE4SS Lua has no sockets).
 -- The phone's commands come back through files too (tf_commands); tf_audio quiets the game's CRTV
 -- sound while the phone plays it; tf_native (a DLL) copies the CRTV's screen for the phone while one
@@ -23,6 +24,7 @@ local audio = require("tf_audio")
 local commands = require("tf_commands")
 local native = require("tf_native")
 local alignment = require("tf_alignment")
+local marks = require("tf_marks")
 
 local SAMPLE_MS = 100  -- telemetry rate
 local COMMAND_MS = 50  -- phone commands; steering needs the quick turnaround
@@ -37,6 +39,7 @@ local gameBeatPath = tempDir and (tempDir .. "\\townfall-companion-game.json")
 if not telemetryPath then log("TF-COMPANION", "no TEMP directory, telemetry disabled") end
 commands.init(tempDir)
 native.init(tempDir)
+marks.init(tempDir)
 
 -- From the companion's heartbeat: whether it runs with a phone on the page, and how often and how wide the phone
 -- wants the CRTV's screen. The file stays open: the companion rewrites it in place every second, and a read in the
@@ -116,8 +119,8 @@ local function sample()
     -- Nothing but the clocks changed: the file is rewritten only every KEEPALIVE_S (the companion calls a
     -- file older than 2 s the game having left), not ten times a second.
     local body = string.format('"player":{"x":%.2f,"y":%.2f,"yaw":%.1f,"alive":%s},"enemies":[%s],'
-        .. '"signals":[%s],"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s}}',
-        x, y, yaw, tostring(alive), enemyJson, signalJson, crtvJson, cutsceneJson, tostring(audio.isOff()))
+        .. '"signals":[%s],"dialMarks":%s,"crtv":%s,"cutscene":%s,"audio":{"gameSoundOff":%s}}',
+        x, y, yaw, tostring(alive), enemyJson, signalJson, marks.json(), crtvJson, cutsceneJson, tostring(audio.isOff()))
     local now = os.clock()
     if body == lastBody and now - lastWrite < KEEPALIVE_S then return end
     local err

@@ -239,12 +239,14 @@ class GameLiveTest(BridgeTest):
         self.assertFalse(state["gameLive"])
         self.assertEqual(state["bridge"], 33)  # static/app.js warns about older bridges
         self.assertRegex(state["page"], r"^[0-9a-f]{12}$")  # an open page reloads when its files change
+        marks = [{"frequency": 0.016, "colour": [1, 0, 1]}]  # another mod's, on the CRTV's dial (tf_marks.lua)
         self.telemetry.write_text(json.dumps({"t": 812.25, "world": 30.5, "player": {"x": 1, "y": 2, "yaw": 3},
-                                              "signals": [{"id": "Clinic", "channel": 0.15}]}))
+                                              "signals": [{"id": "Clinic", "channel": 0.15}], "dialMarks": marks}))
         time.sleep(0.5)
         state = json.loads(self.get("/api/state")[2])
         self.assertTrue(state["gameLive"])
         self.assertEqual((state["player"]["yaw"], state["signals"]), (3, [{"id": "Clinic", "channel": 0.15}]))
+        self.assertEqual(state["dialMarks"], marks)
         self.assertEqual(state["t"], 812.25)  # the game's clock, which the phone times speech by
         self.assertEqual(state["world"], 30.5)  # the world's, which stands still while the game is paused
 
@@ -744,7 +746,8 @@ class GameExitTest(unittest.TestCase):
             [sys.executable, "-u", str(BRIDGE), "--host", "127.0.0.1", "--port", str(free_port()),
              "--telemetry-file", str(folder / "townfall-companion-telemetry.json"), "--settings", str(folder / "c.ini"),
              "--pin", "",
-             "--game-gone-after", "3"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             # The heartbeat counts whole seconds: 5 s, so a busy moment on a loaded PC doesn't read as the game gone.
+             "--game-gone-after", "5"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def test_the_companion_closes_when_a_game_it_has_seen_is_gone(self):
         with tempfile.TemporaryDirectory() as tmp:

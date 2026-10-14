@@ -75,10 +75,20 @@ function useNeedleColours(colours) {
   }
 }
 
+// A mark another mod put on the game's dial (state.dialMarks, tf_marks.lua), in that mod's colour.
+function extraMarkerFor(mark) {
+  const marker = document.createElement("i");
+  marker.className = "marker";
+  marker.style.left = `${clamp01(mark.frequency) * 100}%`;
+  marker.style.setProperty("--c", `rgb(${mark.colour.map(v => srgb(clamp01(v))).join(",")})`);
+  return marker;
+}
+
 let markersKey = "";
 // Marks on the dial: monsters the scanner picks up, and, while it is on, every waypoint signal the
-// game has active, whether in reach yet or not: those are the important channels.
-function updateDial(view) {
+// game has active, whether in reach yet or not: those are the important channels; and while it is on, the marks
+// other mods put on the game's dial.
+function updateDial(view, extra) {
   const needle = $("needle");
   needle.style.left = `${view.dial * 100}%`;
   needle.classList.toggle("idle", !view.active);
@@ -86,10 +96,13 @@ function updateDial(view) {
     ...view.enemies.filter(e => e.channel != null && (e.detected || e.tuned)),
     ...(view.active ? view.signals.filter(s => s.channel != null) : []),
   ];
-  const key = marks.map(m => `${m.channel}:${m.tuned}:${m.found}:${clamp01(m.signal).toFixed(1)}`).join();
+  const others = view.active && Array.isArray(extra)
+    ? extra.filter(m => Number.isFinite(m?.frequency) && Array.isArray(m.colour) && m.colour.length === 3) : [];
+  const key = marks.map(m => `${m.channel}:${m.tuned}:${m.found}:${clamp01(m.signal).toFixed(1)}`).join()
+    + "|" + others.map(m => `${m.frequency}:${m.colour}`).join();
   if (key !== markersKey) {
     markersKey = key;
-    $("markers").replaceChildren(...marks.map(markerFor));
+    $("markers").replaceChildren(...marks.map(markerFor), ...others.map(extraMarkerFor));
   }
 }
 
@@ -559,7 +572,7 @@ function frame(now) {
   const streamed = streaming && crtvStream.draw(screenContext, screenCanvas.width, screenCanvas.height);
   $("crtv").classList.toggle("native-feed", streamed);
   if (!streamed) drawScreen(view.active, strongest, connected && !alive);
-  updateDial(view);
+  updateDial(view, state.dialMarks);
   // In AV OUT the phone stays dark and silent: the PC has it all.
   updateSound(live && phoneShows() && phonePlays(), live);
   // The game's own goes quiet once the phone's comes through, and comes back at once when it stops.
