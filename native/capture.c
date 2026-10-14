@@ -47,15 +47,18 @@ static _Atomic uint64_t config_tick, published_frames;
 static _Atomic uint64_t published_at;
 static uint64_t frame_sequence;
 static ULONGLONG next_capture_at;
-static int allocated_width, allocated_height;
-static unsigned allocated_format;
 static HANDLE frame_mapping;
 static unsigned char *shared_frame;
 static wchar_t frame_mapping_name[128] = L"Local\\TownfallCompanionPicture";
 static HANDLE picture_wake; /* set once frame_pixels holds a frame for the picture thread */
 static ULONGLONG queued_at;
+/* One readback per texture size the screen has had: the game's own, or any other texture bound to the screen. Made
+ * when first needed and kept, as a copy in flight is never freed; `readback` is the one the current copy uses. */
+#define READBACKS 4
+#define FRAME_MAX 2048
+static struct { void *object; int width, height; unsigned format; } readbacks[READBACKS];
 static void *readback;
-static unsigned char *frame_pixels;
+static unsigned char *frame_pixels; /* FRAME_MAX x FRAME_MAX, 4 bytes a pixel: a frame of any size fits */
 static int frame_width, frame_height;
 static unsigned frame_format;
 
@@ -79,7 +82,11 @@ static const char *capture_status(void) {
         now - atomic_load(&config_tick) <= 3000) return "streaming";
     switch (phase) {
         case 0: return "disabled";
-        case 1: return atomic_load(&capture_wait_reason) == 7 ? "waiting-for-source" : "armed";
+        case 1: switch (atomic_load(&capture_wait_reason)) {
+            case 7: return "waiting-for-source";
+            case 8: return "too-many-source-sizes";
+            default: return "armed";
+        }
         case 2: return "gpu-copy-pending";
         case 3: return "writing-frame";
         case 4: return "frame-ready";
@@ -91,7 +98,6 @@ static const char *capture_status(void) {
         case -6: return "allocation-failed";
         case -7: return "capture-too-slow";
         case -8: return "shared-memory-failed";
-        case -9: return "source-dimensions-changed";
         default: return "invalid";
     }
 }
@@ -105,6 +111,7 @@ static const char *capture_wait_status(void) {
         case 5: return "executing-list";
         case 6: return "multi-gpu-or-unreadable-mask";
         case 7: return "no-source";
+        case 8: return "too-many-source-sizes";
         default: return "none";
     }
 }
@@ -162,6 +169,27 @@ static int start_pictures(void) {
     return 1;
 }
 
+/* The readback for a copy of this size and format, made the first time one is needed. NULL if it couldn't be made, or
+ * (*full set) if every readback is kept for another size. */
+static void *readback_for(int width, int height, unsigned format, int *full) {
+    *full = 0;
+    for (int i = 0; i < READBACKS; ++i) {
+        if (readbacks[i].object) {
+            if (readbacks[i].width == width && readbacks[i].height == height && readbacks[i].format == format)
+                return readbacks[i].object;
+            continue;
+        }
+        void *object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, READBACK_SIZE);
+        if (!object) return NULL;
+        readback_ctor(object, 0); /* FName(NAME_None), verified eight-byte by-value ABI. */
+        readbacks[i].object = object;
+        readbacks[i].width = width; readbacks[i].height = height; readbacks[i].format = format;
+        return object;
+    }
+    *full = 1;
+    return NULL;
+}
+
 static void capture_at_frame_end(void *command_list) {
     int phase = atomic_load_explicit(&capture_state, memory_order_acquire);
     unsigned fps = atomic_load(&requested_fps);
@@ -203,7 +231,7 @@ static void capture_at_frame_end(void *command_list) {
         }
         ReleaseSRWLockShared(&source_lock);
         if (!pending_source) { atomic_store(&capture_wait_reason, 7); return; }
-        if (frame_width <= 0 || frame_width > 2048 || frame_height <= 0 || frame_height > 2048 ||
+        if (frame_width <= 0 || frame_width > FRAME_MAX || frame_height <= 0 || frame_height > FRAME_MAX ||
             (frame_format != PIXEL_RGBA8 && frame_format != PIXEL_BGRA8)) {
             retain_texture(&pending_source, NULL);
             atomic_store(&capture_state, -4); return;
@@ -216,23 +244,18 @@ static void capture_at_frame_end(void *command_list) {
             retain_texture(&pending_source, NULL);
             atomic_store(&capture_state, -2); return;
         }
-        if (readback && (allocated_width != frame_width || allocated_height != frame_height || allocated_format != frame_format)) {
+        if (!frame_pixels) frame_pixels = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)FRAME_MAX * FRAME_MAX * 4);
+        int full = 0;
+        void *copy = frame_pixels ? readback_for(frame_width, frame_height, frame_format, &full) : NULL;
+        if (!copy) {
             retain_texture(&pending_source, NULL);
-            atomic_store(&capture_state, -9); return;
+            if (!full) { atomic_store(&capture_state, -6); return; }
+            /* A size more than the readbacks kept: wait for one of theirs to come back (the game's own). */
+            atomic_store(&capture_wait_reason, 8);
+            next_capture_at = now + 250;
+            return;
         }
-        if (!readback) {
-            readback = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, READBACK_SIZE);
-            frame_pixels = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)frame_width * frame_height * 4);
-            if (!readback || !frame_pixels) {
-                if (readback) HeapFree(GetProcessHeap(), 0, readback);
-                if (frame_pixels) HeapFree(GetProcessHeap(), 0, frame_pixels);
-                readback = NULL; frame_pixels = NULL;
-                retain_texture(&pending_source, NULL);
-                atomic_store(&capture_state, -6); return;
-            }
-            readback_ctor(readback, 0); /* FName(NAME_None), verified eight-byte by-value ABI. */
-            allocated_width = frame_width; allocated_height = frame_height; allocated_format = frame_format;
-        }
+        readback = copy;
         int position[3] = {0, 0, 0}, size[3] = {frame_width, frame_height, 1};
         transition_source(command_list, access, ACCESS_COPY_SRC);
         enqueue_copy(readback, command_list, pending_source, position, 0, size);

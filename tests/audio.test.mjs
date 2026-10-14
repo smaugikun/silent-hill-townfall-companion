@@ -99,6 +99,30 @@ test("the stream goes to the player in whole frames, after the header, however t
   delete globalThis.AudioWorkletNode;
 });
 
+test("Remove the hum puts a narrow notch on every 50 Hz from 100 to 1300, in line, at once and in a later player", async () => {
+  const {context} = fakeAudio();
+  const notches = [], chain = [];
+  context.createBiquadFilter = () => {
+    const notch = {type: "", frequency: {value: 0}, Q: {value: 0}, disconnect() {},
+                   connect(next) { chain.push([this, next]); return next; }};
+    notches.push(notch);
+    return notch;
+  };
+  const stream = createAudioStream({request: async () => response([HEADER], false), context, now: () => 0});
+  stream.removeHum(false); // switched off before the player exists
+  stream.update(true);
+  await settle();
+  assert.deepEqual(notches.map((n) => n.frequency.value), Array.from({length: 25}, (_, i) => 100 + 50 * i));
+  assert.ok(notches.every((n) => n.Q.value === 40 && n.type === "allpass"), "off: the sound as it is");
+  assert.deepEqual(chain.slice(0, 24).map(([from, to]) => [notches.indexOf(from), notches.indexOf(to)]),
+    Array.from({length: 24}, (_, i) => [i, i + 1]), "each notch feeds the next");
+  stream.removeHum(true);
+  assert.ok(notches.every((n) => n.type === "notch"));
+  stream.removeHum(false);
+  assert.ok(notches.every((n) => n.type === "allpass"));
+  delete globalThis.AudioWorkletNode;
+});
+
 test("a stream that ends or goes silent is no longer live, and is opened again", async () => {
   const {context} = fakeAudio();
   let clock = 0, requests = 0;

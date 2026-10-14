@@ -28,7 +28,7 @@ from game_audio import GameAudio
 
 STATIC = Path(__file__).resolve().parent / "static"
 # Bump when the phone UI starts relying on something new in the bridge (static/app.js checks it).
-BRIDGE_VERSION = 31
+BRIDGE_VERSION = 33
 # Taken by another program, or kept by Windows for itself (Hyper-V and WSL reserve ranges of ports).
 PORT_UNAVAILABLE = {errno.EADDRINUSE, errno.EACCES, getattr(errno, "WSAEACCES", errno.EACCES)}
 PORT_TRIES = 20
@@ -66,6 +66,7 @@ SHOWN = {"confirm": "phone pressed the D-pad's centre", "release": "phone let go
          "note": "phone: {text}"}
 
 state_lock = threading.Lock()
+command_orders = {}  # bounded, per-page command order; confirm/release share one channel
 telemetry = {
     "player": {"x": 0.0, "y": 0.0, "yaw": 0.0, "alive": True},
     "enemies": [],
@@ -167,16 +168,48 @@ def close_heartbeats():
 def ipc_files(telemetry_file):
     """Everything the companion and the mod leave in the temp folder."""
     folder = Path(telemetry_file).parent
-    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE]
+    names = [*COMMAND_FILES.values(), HEARTBEAT_FILE, GAME_FILE,
+             "townfall-companion-native-source.bin", "townfall-companion-native-align.bin",
+             "townfall-companion-native-look.bin", "townfall-companion-native-sound.bin",
+             "townfall-companion-native.json", "townfall-companion-native-buses.txt",
+             "townfall-companion-crtv-crop.json", "townfall-companion-native-keys.bin",
+             "townfall-companion-native-key-owner.bin"]
     return [Path(telemetry_file), *(folder / name for name in names)]
 
 
+def game_may_be_running(folder):
+    path = Path(folder) / GAME_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "time" not in data:
+            return False
+        stamp = float(data["time"])
+        return math.isfinite(stamp) and abs(time.time() - stamp) <= 5
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError):
+        # An in-place write may be incomplete: a recently modified file is still in use.
+        try:
+            return abs(time.time() - path.stat().st_mtime) <= 5
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True  # cannot establish that it is safe to remove game-owned files
+
+
 def remove_ipc_files(telemetry_file):
-    for path in ipc_files(telemetry_file):
+    # Game-side handles remain open during play. Keep their files until the game stops, or the next safe startup.
+    # Only this bridge's heartbeat can be removed while the game runs, after its worker has stopped.
+    paths = ipc_files(telemetry_file)
+    if game_may_be_running(Path(telemetry_file).parent):
+        paths = [Path(telemetry_file).parent / HEARTBEAT_FILE]
+    failed = []
+    for path in paths:
         try:
             path.unlink(missing_ok=True)
         except OSError:
-            pass
+            failed.append(path)
+    return failed
 
 
 def read_game_beat(path, within):
@@ -189,14 +222,15 @@ def read_game_beat(path, within):
     return beat if time.time() - beat <= within else None
 
 
-def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER):
+def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER, stop_event=None):
     """Says every second that the companion is here and how many phones have the page open, and closes it
     once a game it has seen running has stopped saying so for `gone_after` seconds. Started without the game,
     it just keeps running. A read that fails changes nothing: the mod rewrites the file every second, and a
     read in that moment finds it empty."""
     folder = Path(telemetry_file).parent
     last_beat = None  # the newest heartbeat time read, once the game has been seen
-    while True:
+    stop_event = stop_event or threading.Event()
+    while not stop_event.is_set():
         write_heartbeat(folder / HEARTBEAT_FILE, port)
         beat = read_game_beat(folder / GAME_FILE, gone_after)
         if beat is not None:
@@ -205,10 +239,12 @@ def heartbeat_loop(telemetry_file, port, server, gone_after=GAME_GONE_AFTER):
             print("The game has closed: closing the companion.")
             server.shutdown()
             return
-        time.sleep(HEARTBEAT_EVERY)
+        stop_event.wait(HEARTBEAT_EVERY)
 
 
 def merge_telemetry(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("telemetry must be an object")
     with state_lock:
         for key in ("player", "crtv", "audio"):
             if isinstance(payload.get(key), dict):
@@ -252,6 +288,12 @@ def finite(value):
     return number
 
 
+def session_number(value):
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 2 ** 53:
+        raise ValueError("session must be a positive whole number")
+    return value
+
+
 def send_to_game(commands_dir, payload):
     """Hand a phone command to the UE4SS mod, which polls these files (tf_commands.lua)."""
     global last_command_seq
@@ -277,6 +319,8 @@ def send_to_game(commands_dir, payload):
             if abs(pitch) > 90:
                 raise ValueError("pitch must be within 90 degrees of level")
             command["pitch"] = pitch
+        if "session" in payload:
+            command["session"] = session_number(payload["session"])
     elif payload["type"] == "fine_tune":
         direction = payload.get("direction")
         if not isinstance(direction, str) or direction not in ("up", "down", "left", "right"):
@@ -291,6 +335,13 @@ def send_to_game(commands_dir, payload):
             raise ValueError("onMonitor and miniGameShown must be true or false")
         command = {"selector": payload["selector"], "onMonitor": payload["onMonitor"],
                    "miniGameShown": payload["miniGameShown"]}
+        for option in ("steering", "handoff", "takeAudio"):
+            if option in payload:
+                if not isinstance(payload[option], bool):
+                    raise ValueError(option + " must be true or false")
+                command[option] = payload[option]
+        if "steerSession" in payload:
+            command["steerSession"] = session_number(payload["steerSession"])
     elif payload["type"] == "align":
         # The phone's lean and tilt from its neutral pose (degrees), how many degrees move the image half its range,
         # and which neutral pose (session).
@@ -321,12 +372,29 @@ def send_to_game(commands_dir, payload):
         command = {"muteGame": payload["muteGame"]}  # the game's CRTV sound quiet while the phone plays it
     else:
         command = {}  # confirm, release: the press is the whole command
+        if "session" in payload:
+            command["session"] = session_number(payload["session"])
+    client, order = payload.get("client"), payload.get("order")
+    if client is not None or order is not None:
+        if not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{24}", client):
+            raise ValueError("invalid control page")
+        session_number(order)
     with state_lock:
+        if client is not None:
+            group = "centre" if payload["type"] in ("confirm", "release") else payload["type"]
+            key = (str(commands_dir), client, group)
+            if order <= command_orders.get(key, 0):
+                return False  # an older request must not replace a newer stop/release or pose
+            command_orders[key] = order
+            if len(command_orders) > 256:
+                command_orders.pop(next(iter(command_orders)))
+            command.update(client=client, order=order)
         # The mod acts on a changed seq; the clock keeps it changing across bridge restarts.
         last_command_seq = max(int(time.time() * 1000), last_command_seq + 1)
         # seq goes last, so a file the mod reads half-written has none and is skipped.
         command["seq"] = last_command_seq
         (commands_dir / COMMAND_FILES[payload["type"]]).write_text(json.dumps(command), encoding="utf-8")
+    return True
 
 
 PIN_COOKIE = "tfc_pin"
@@ -670,14 +738,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self._login(payload)
 
         if path == "/api/control":
+            if not isinstance(payload, dict):
+                return self._json({"ok": False, "error": "command must be an object"}, 400)
             kind = payload.get("type")
             if not isinstance(kind, str) or kind not in COMMAND_FILES:  # a list or object would not even hash
                 return self._json({"ok": False, "error": f"unknown command type: {kind!r}"}, 400)
             try:
-                send_to_game(self.commands_dir, payload)
+                applied = send_to_game(self.commands_dir, payload)
             except (KeyError, TypeError, ValueError) as exc:
                 return self._json({"ok": False, "error": f"bad {kind} command: {exc}"}, 400)
-            if kind in SHOWN:
+            if applied and kind in SHOWN and not (kind == "confirm" and payload.get("renew") is True):
                 shown = SHOWN[kind].format(direction=payload.get("direction"), selector=payload.get("selector"),
                                            text=payload.get("text"))
                 repeated = kind == "mode" and shown == Handler.shown_mode
@@ -690,30 +760,29 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json({"ok": False, "error": "not found"}, 404)
 
 
-def watch_telemetry_file(path):
+def watch_telemetry_file(path, stop_event=None):
     """Feeds the game's telemetry file, as the mod rewrites it, into the state the phone gets."""
     global game_file_live
-    last_raw, live, read_at = None, False, 0.0
-    while True:
+    stop_event = stop_event or threading.Event()
+    last_raw, live, valid_at = None, False, -math.inf
+    while not stop_event.is_set():
+        now = time.monotonic()
         try:
-            now_live = time.time() - path.stat().st_mtime < TELEMETRY_STALE_AFTER
-            raw = path.read_text(encoding="utf-8") if now_live else None
-            read_at = time.time()
-        except OSError:
-            # Gone, or held by whoever is writing it (Windows refuses a read meanwhile): the game has left
-            # only once the file stays unreadable as long as it may be old.
-            now_live, raw = live and time.time() - read_at < TELEMETRY_STALE_AFTER, None
+            fresh = time.time() - path.stat().st_mtime < TELEMETRY_STALE_AFTER
+            raw = path.read_text(encoding="utf-8") if fresh else None
+            if raw:
+                if raw != last_raw:
+                    merge_telemetry(json.loads(raw))
+                    last_raw = raw
+                valid_at = now
+        except (OSError, UnicodeError, ValueError, TypeError):
+            pass  # a partial/corrupt sample must not terminate the worker or renew game liveness
+        now_live = now - valid_at < TELEMETRY_STALE_AFTER
         if now_live != live:
             live = game_file_live = now_live
             print(f"Game telemetry {'live' if live else 'stale'}: {path}")
             update_live()
-        if raw and raw != last_raw:
-            try:
-                merge_telemetry(json.loads(raw))
-                last_raw = raw
-            except ValueError:
-                pass  # read it mid-write; the next poll sees the whole file
-        time.sleep(0.05)
+        stop_event.wait(0.05)
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -728,7 +797,7 @@ class BridgeServer(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address):
         # Phones drop idle connections all the time (screen lock, tab switch); that's not an error.
-        if isinstance(sys.exc_info()[1], ConnectionError):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
             return
         super().handle_error(request, client_address)
 
@@ -829,6 +898,8 @@ def main():
     elif already:
         raise SystemExit(f"Townfall Companion is already running (port {already.get('port')}): use that window, "
                          "or close it first.")
+    # Reclaim known leftovers only when no bridge or game is currently using them.
+    remove_ipc_files(args.telemetry_file)
     global pin_token
     pin = settings.pin if args.pin is None else args.pin.strip()
     if pin and not (pin.isdigit() and 4 <= len(pin) <= 12):
@@ -843,18 +914,12 @@ def main():
     telemetry["page"] = page_version()
     wanted = args.port or settings.port
     server, port = open_server(host, wanted)
-    global running
-    running = server
 
     # Only what a player needs: the version, problems, and (below) the port and the phone's address and PIN.
     print(f"Townfall Companion {config.VERSION}")
     if console_problem:
         print(f"UE4SS console: {console_problem}. To hide it, set ConsoleEnabled, GuiConsoleEnabled and "
               "GuiConsoleVisible to 0 in that file yourself.")
-    threading.Thread(target=heartbeat_loop, args=(args.telemetry_file, port, server, args.game_gone_after),
-                     daemon=True).start()
-    threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file,), daemon=True).start()
-    threading.Thread(target=prepare_game_profile, daemon=True).start()
 
     if port != wanted:
         print(f"Port {wanted} is taken by another program, so the companion uses port {port}. The phone's address "
@@ -865,7 +930,17 @@ def main():
             print("On the phone: this PC has no network address; connect it to the network the phone is on")
     else:
         print(f"Listening on http://{host}:{port}")
-    phone_info.update(pin=pin or None, urls=[f"http://{lan_ip()}:{port}"] if host == "0.0.0.0" and lan_ip() else [])
+    ip = lan_ip() if host == "0.0.0.0" else host
+    phone_info.update(pin=pin or None, urls=[f"http://{ip}:{port}"] if ip else [])
+    global running
+    running = server
+    stop_workers = threading.Event()
+    workers = [threading.Thread(target=heartbeat_loop,
+                               args=(args.telemetry_file, port, server, args.game_gone_after, stop_workers), daemon=True),
+               threading.Thread(target=watch_telemetry_file, args=(args.telemetry_file, stop_workers), daemon=True)]
+    for worker in workers:
+        worker.start()
+    threading.Thread(target=prepare_game_profile, daemon=True).start()
     print(connect_banner(), end="")
     print(f"The phone asks for the PIN once (change it in {settings.file.name}).")
     try:
@@ -873,11 +948,16 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        stop_workers.set()
+        for worker in workers:
+            worker.join()
         Handler.frames.close()
         Handler.audio.close()
         close_heartbeats()
         server.server_close()
-        remove_ipc_files(args.telemetry_file)
+        failed = remove_ipc_files(args.telemetry_file)
+        if failed:
+            print(f"{len(failed)} temporary files are still in use; cleanup will retry at the next safe start.")
 
 
 if __name__ == "__main__":

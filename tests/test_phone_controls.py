@@ -140,8 +140,10 @@ class FineTuneKeysTest(unittest.TestCase):
             pawn = {GetIsRadioInActiveMode = function() return active end, GetRadio = function() return radio end}
             logged = {}
             package.loaded.tf_common = {logChange = function() end,
+                optional = function(_, _, fn) return fn() end,
                 log = function(tag, format, ...) logged[#logged + 1] = tag .. " " .. string.format(format, ...) end}
-            package.loaded.tf_player = {isTracking = function() return tracking end, pawn = function() return pawn end}
+            package.loaded.tf_player = {isTracking = function() return tracking end, pawn = function() return pawn end,
+                isAlive = function() return tracking end, verifyTurn = function() end}
             package.loaded.tf_audio = {request = function() end, update = function() end}
             package.loaded.tf_alignment = {apply = function() end}
             miniGame = nil

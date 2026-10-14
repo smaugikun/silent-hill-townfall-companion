@@ -22,6 +22,28 @@ else:
 
 @unittest.skipIf(tkinter is None, "this Python has no tkinter")
 class WindowTest(unittest.TestCase):
+    def test_chrome_guide_under_pin_uses_the_current_phone_address_and_port(self):
+        try:
+            root = tkinter.Tk()
+        except tkinter.TclError:
+            self.skipTest("no screen")
+        try:
+            root.withdraw()
+            companion = types.SimpleNamespace(running=types.SimpleNamespace(server_address=("0.0.0.0", 18790)),
+                phone_info={"urls": ["http://192.168.1.50:18790"], "pin": "1234"})
+            window = gui.Window(root, companion)
+            window.served = True
+            window.show_addresses()
+            labels = [child.cget("text") for child in window.addresses.winfo_children() if isinstance(child, tkinter.Label)]
+            pin = next(i for i, text in enumerate(labels) if text.startswith("PIN"))
+            tutorial = labels[pin + 1]
+            self.assertIn("chrome://flags", tutorial)
+            self.assertIn("Insecure origins treated as secure", tutorial)
+            self.assertIn("http://192.168.1.50:18790", tutorial)
+            self.assertIn("Relaunch", tutorial)
+        finally:
+            root.destroy()
+
     def test_the_log_gets_whole_lines_from_each_thread(self):
         events = queue.Queue()
         stream = gui.LogStream(events, None)

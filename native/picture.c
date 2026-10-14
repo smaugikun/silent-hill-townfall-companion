@@ -6,7 +6,8 @@
 #include <wincodec.h>
 
 /* Where the screen is in the 2048x2048 texture the game draws it into, measured in the game, whatever the screen
- * shows: a band across it, the rest isn't part of the screen. A texture of another size is taken whole. */
+ * shows: a band across it, the rest isn't part of the screen. The screen shows the same part of any texture bound to
+ * it, whatever its size, so the box is scaled to it. */
 #define SCREEN_TEXTURE_SIZE 2048
 static const int SCREEN_BOX[4] = {6, 345, 2044, 1728}; /* left, top, right, bottom (exclusive) */
 #define PICTURE_MAX_WIDTH 640
@@ -41,8 +42,11 @@ static _Atomic unsigned requested_width = PICTURE_MAX_WIDTH;
  * under it, as BGR rows `*stride` bytes apart in picture_rows. Returns the picture's height; *out_width becomes its
  * width. */
 static int scale_screen(const unsigned char *pixels, int width, int height, int bgra, int *out_width, UINT *stride) {
-    int box[4] = {0, 0, width, height};
-    if (width == SCREEN_TEXTURE_SIZE && height == SCREEN_TEXTURE_SIZE) memcpy(box, SCREEN_BOX, sizeof(box));
+    int box[4];
+    for (int i = 0; i < 4; ++i) {
+        int size = i % 2 ? height : width;
+        box[i] = (SCREEN_BOX[i] * size + SCREEN_TEXTURE_SIZE / 2) / SCREEN_TEXTURE_SIZE;
+    }
     int box_width = box[2] - box[0], box_height = box[3] - box[1];
     int picture_width = *out_width < box_width ? *out_width : box_width;
     int picture_height = (box_height * picture_width + box_width / 2) / box_width;

@@ -1,15 +1,16 @@
 import { $, createGameClock, deviceHeading, devicePitch, norm180, norm360, clamp01, postControl, watchStillTime,
   worldBearing } from "./util.js";
 import { SIGNAL_RANGE, drawScreen } from "./screen.js";
-import { centreHeld, control, onControlChange, onTelemetry, onVisibilityChange, phoneShows, sayMode, scannerView,
-  setMiniGameShown, setPutDown, setRaises, setSelector, setSteering, steers } from "./scanner.js";
+import { centreHeld, control, onControlChange, onTelemetry, onVisibilityChange, phoneShows, releaseFineTune, sayMode, scannerView,
+  setMiniGameShown, setPutDown, setRaises, setSelector, setSteering, setSteeringBlocked, steers } from "./scanner.js";
 import { listenMotion, onPickup, onPutDown, pickup, pickupPosition, setAutoPickup, setStandAvOut, wakeSteering }
   from "./pickup.js";
 import { bindControls } from "./controls.js";
 import { canVibrate, controlHaptic, haptics, newSignalHaptic, setHaptics, signalHaptic } from "./haptics.js";
-import { resumeSound, setSound, sound, soundPlaying, unlockSound, updateSound } from "./sound.js";
+import { resumeSound, setSound, sound, soundPlaying, takesGameSound, unlockSound, updateSound } from "./sound.js";
 import { createCrtvStream } from "./crtv-stream.js";
 import { alignmentSettings, createAlignment, setAlignmentSensitivity } from "./alignment.js";
+import { motionPermission } from "./motion-access.js";
 
 const crtvStream = createCrtvStream();
 const alignment = createAlignment({send: postControl});
@@ -162,8 +163,10 @@ function followGame() {
 
 // Only "deviceorientation": on Android its alpha is relative (gyro, steady indoors), and mixing it
 // with the compass-based "deviceorientationabsolute" would make the heading jump between the two.
+let sensorRequest = 0, sensorPending = false;
 function useSensors(on) {
-  if (on === sensorsOn) return;
+  if (on === sensorsOn && (!on || sensorPending || !["denied", "waiting"].includes(sensorState))) return;
+  const request = ++sensorRequest;
   sensorsOn = on;
   if (!on) {
     window.removeEventListener("deviceorientation", orientationHandler, true);
@@ -174,15 +177,14 @@ function useSensors(on) {
   }
   if (typeof DeviceOrientationEvent === "undefined") { sensorState = "none"; return; }
   sensorState = "waiting";
-  const listen = () => { if (sensorsOn) window.addEventListener("deviceorientation", orientationHandler, true); };
-  // iOS asks first, and only from a tap: moving the selector is one.
-  if (typeof DeviceOrientationEvent.requestPermission === "function") {
-    DeviceOrientationEvent.requestPermission()
-      .then((result) => { if (result === "granted") listen(); else sensorState = "denied"; })
-      .catch(() => { sensorState = "denied"; });
-  } else {
-    listen();
-  }
+  sensorPending = true;
+  motionPermission(DeviceOrientationEvent).then(allowed => {
+    if (request !== sensorRequest) return;
+    sensorPending = false;
+    if (!sensorsOn) return;
+    if (allowed) window.addEventListener("deviceorientation", orientationHandler, true);
+    else sensorState = "denied";
+  });
 }
 
 // As soon as the sensor has read.
@@ -262,6 +264,9 @@ const STEER_MS = 60;
 const STEER_KEEPALIVE_MS = 1000;
 let lastSteer = {at: 0, heading: null, tilt: null};
 function maybeSteer() {
+  setSteeringBlocked(paused || holdMedia || !state.gameLive || state.player?.alive === false || miniGameRuns()
+    || !!state.cutscene?.sequence || (state.crtv?.active && state.crtv?.signalType === "waypoint")
+    || !sensorsOn || phoneHeading == null);
   if (state.crtv?.active && state.crtv?.signalType === "waypoint") return;
   if (!steers() || paused || !sensorsOn || phoneHeading == null || !state.gameLive || miniGameRuns()) return;
   const now = performance.now();
@@ -271,7 +276,7 @@ function maybeSteer() {
     || (tilt != null && lastSteer.tilt != null && Math.abs(tilt - lastSteer.tilt) >= 0.5);
   if (!moved && now - lastSteer.at < STEER_KEEPALIVE_MS) return;
   lastSteer = {at: now, heading: phoneHeading, tilt};
-  postControl(tilt == null ? {type: "steer", yaw: phoneHeading} : {type: "steer", yaw: phoneHeading, pitch: tilt});
+  postControl({type: "steer", yaw: phoneHeading, ...(tilt == null ? {} : {pitch: tilt}), session: control.steerSession});
 }
 
 // The tuned monster pulses, faster and stronger the closer it is and the better the phone points at it.
@@ -326,15 +331,16 @@ function goFullScreen() {
 // (tf_audio.lua). Hiding the page asks for the sound back immediately; if the phone loses power or Wi-Fi,
 // the game gives it back 5 s after the last request.
 const GAME_SOUND_REQUEST_MS = 2000;
-let gameSoundAsked = false, soundWasPlaying = false;
+let gameSoundAsked = false;
 
 // Whether the phone plays the CRTV's sound: in VIEW unless switched off. AV OUT: the PC has all of it.
 const phonePlays = () => control.selector === "VIEW" && sound.inView;
 
 // Turned all the way down, the phone doesn't take the sound away from the game.
+const wantsGameSound = () => takesGameSound(phonePlays() && bridgeOnline
+  && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible");
 function requestGameSound() {
-  const quiet = phonePlays() && sound.muteGame && sound.volume > 0 && soundPlaying() && bridgeOnline
-    && state.gameLive && state.player?.alive !== false && document.visibilityState === "visible";
+  const quiet = wantsGameSound();
   if (quiet || gameSoundAsked) postControl({type: "audio", muteGame: quiet});
   gameSoundAsked = quiet;
 }
@@ -388,6 +394,7 @@ function renderSettings() {
   $("setSoundMuteGame").checked = sound.muteGame;
   $("setSoundMuteGame").disabled = !sound.inView; // the phone never plays
   $("setSoundVolume").value = String(Math.round(sound.volume * 100));
+  $("setSoundRemoveHum").checked = sound.removeHum;
   $("setAlignSensitivity").value = String(alignmentSettings.sensitivity);
   $("setControlHaptics").checked = haptics.control;
   $("setSignalHaptics").checked = haptics.signal;
@@ -461,6 +468,7 @@ $("setSoundInView").addEventListener("change", (ev) => { setSound("inView", ev.t
 $("setSoundMuteGame").addEventListener("change", (ev) => { setSound("muteGame", ev.target.checked); requestGameSound(); });
 $("setSoundVolume").addEventListener("input", (ev) => setSound("volume", Number(ev.target.value) / 100));
 $("setSoundVolume").addEventListener("change", requestGameSound); // the game's sound comes back at 0, and goes again above it
+$("setSoundRemoveHum").addEventListener("change", (ev) => setSound("removeHum", ev.target.checked));
 $("setControlHaptics").addEventListener("change", (ev) => setHaptics("control", ev.target.checked));
 $("setSignalHaptics").addEventListener("change", (ev) => setHaptics("signal", ev.target.checked));
 for (const radio of document.querySelectorAll('input[name="intensity"]')) {
@@ -553,12 +561,9 @@ function frame(now) {
   if (!streamed) drawScreen(view.active, strongest, connected && !alive);
   updateDial(view);
   // In AV OUT the phone stays dark and silent: the PC has it all.
-  updateSound(live && phoneShows() && phonePlays());
+  updateSound(live && phoneShows() && phonePlays(), live);
   // The game's own goes quiet once the phone's comes through, and comes back at once when it stops.
-  if (soundPlaying() !== soundWasPlaying) {
-    soundWasPlaying = soundPlaying();
-    requestGameSound();
-  }
+  if (wantsGameSound() !== gameSoundAsked) requestGameSound();
   screenText(now);
   if (!settings.hidden) renderStatus(view, monsters[0], signal, heading);
 
@@ -644,7 +649,7 @@ function alignmentOff(now, alive) {
 
 // The bridge version this page needs (bridge.py BRIDGE_VERSION, raised with every change to what the two say to
 // each other): a bridge still running from before an update gets the page to say RESTART THE COMPANION.
-const NEEDS_BRIDGE = 31;
+const NEEDS_BRIDGE = 33;
 let bridgeOnline = false;
 let everOnline = false;
 let pageVersion = null; // the bridge's page files when this page loaded (bridge.py page_version)
@@ -707,9 +712,9 @@ onControlChange((c) => {
   const entering = c.selector === "VIEW" && shownSelector !== "VIEW";
   if (entering) pairHeading();
   // Steering starts or stops (picked up, put down, switched): the view carries on from where it looks.
-  if (steers() !== wasSteering && reference) {
-    reference.world = Number(state.player?.yaw ?? 0);
-    lastSteer = {at: 0, heading: null};
+  if (steers() !== wasSteering) {
+    if (reference) reference.world = Number(state.player?.yaw ?? 0);
+    lastSteer = {at: 0, heading: null, tilt: null};
   }
   wasSteering = steers();
   // ⌖ in VIEW, where the phone's direction counts; the hint the first time VIEW starts. Turning needs the
@@ -733,19 +738,23 @@ onControlChange((c) => {
 // settings keep theirs, for copying.
 document.addEventListener("contextmenu", (ev) => { if (!ev.target.closest(".sheet")) ev.preventDefault(); });
 // The game hears the phone's mode again every MODE_REPEAT_MS, so a phone that stopped saying it (its page closed or
-// frozen, the Wi-Fi gone) has its CRTV put away (scanner.js sayMode); a hidden page counts as AV OUT. Leaving the
-// page hands the game back at once, like moving to AV OUT, sound included.
+// frozen, the Wi-Fi gone) hands its active CRTV back to the PC. A hidden page requests that handoff at once.
 const MODE_REPEAT_MS = 2000;
 setInterval(() => sayMode(), MODE_REPEAT_MS);
-document.addEventListener("visibilitychange", onVisibilityChange);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) updateSound(false, false);
+  onVisibilityChange();
+});
 window.addEventListener("pagehide", () => {
+  releaseFineTune();
   sayMode(true);
   if (gameSoundAsked) postControl({type: "audio", muteGame: false});
 });
 // A wake lock, full screen, sound and (on iOS) the motion sensor need a tap first; any later tap brings
 // back sound Android suspended.
-document.addEventListener("pointerup", () => { keepAwake(); goFullScreen(); unlockSound(); listenMotion(); }, {once: true});
-document.addEventListener("pointerdown", resumeSound);
+document.addEventListener("pointerup", () => { keepAwake(); goFullScreen(); unlockSound(); }, {once: true});
+document.addEventListener("pointerup", () => { listenMotion(); if (sensorsOn) useSensors(true); });
+document.addEventListener("pointerdown", unlockSound);
 bindControls();
 connect();
 requestAnimationFrame(render);

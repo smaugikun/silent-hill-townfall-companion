@@ -1,15 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.0.1
 
-- Partial or failed native audio setup no longer silences the game's CRTV buses.
-- Failed look-hook setup removes the hooks it created and reports installation or cleanup failures separately.
-- CRTV camera rotation reads and writes now check page accessibility.
-- Capture reports streaming only after recent frames and a fresh request, and rounds capture intervals up.
-- Audio streams stop cleanly when their source is removed during shutdown.
-- Hiding or locking the phone's page requests PC sound immediately, without waiting for a timer.
-- Corrected DLL documentation about memory checks, system libraries, shared-memory copies, build reproduction
-  and game-update compatibility.
+- Fixed sound issues on the phone, with a new setting to remove the CRTV's hum.
+- Fixed steering issues.
 
 ## 2.0.0
 

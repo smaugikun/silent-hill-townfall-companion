@@ -85,7 +85,11 @@ function postJson(path, body) {
   }).then(async (response) => { await response.arrayBuffer(); return response; }).catch(() => {});
 }
 
-export const postControl = (body) => postJson("/api/control", body);
+// Keep request order across slow/reordered HTTP connections. A new page gets its own ordering identity.
+const controlClient = Array.from(globalThis.crypto?.getRandomValues?.(new Uint8Array(12)) ??
+  Uint8Array.from({length: 12}, () => Math.floor(Math.random() * 256)), byte => byte.toString(16).padStart(2, "0")).join("");
+let controlOrder = 0;
+export const postControl = (body) => postJson("/api/control", {...body, client: controlClient, order: ++controlOrder});
 
 // Settings survive a reload where the browser allows it. true/false are kept as "1"/"0".
 export function loadSetting(key, fallback) {

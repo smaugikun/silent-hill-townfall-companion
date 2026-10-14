@@ -152,7 +152,9 @@ continue, but `look` is false and `lookStatus` reports `hook-install-failed`. If
 - Capture is paced at the phone's requested fps (≤ 30), with intervals rounded up to whole milliseconds. It slows
   down when measured GPU-queue and readback CPU time would exceed a tenth of the interval. This budget excludes
   JPEG encoding on the picture thread. A queue or readback step over 50 ms stops capture (`capture-too-slow`).
-- Only RGBA8/BGRA8 textures up to 2048×2048.
+- Only RGBA8/BGRA8 textures up to 2048×2048. Each texture size gets a GPU readback of its own, made once and kept (at
+  most 4): when a texture of another size is bound to the CRTV's screen, capture goes on with it. A fifth
+  size waits (`too-many-source-sizes`) until one of the four comes back.
 - FMOD DSPs pass blocks on unchanged until all taps and the master publication DSP are attached. Partial or failed
   setup cannot mute the game. Once ready, muting writes silence only into buses selected for the phone's CRTV audio,
   including waypoint dialogue and transmissions. Existing taps remain attached in pass-through mode if setup fails.
@@ -178,9 +180,9 @@ Status strings (`[TF-NATIVE]` lines):
 
 `streaming` requires a fresh capture request, a picture published within the last 3 seconds, and no current wait
 reason. It describes recent output, not a guarantee that the next GPU copy will finish.
-Other capture states: `disabled`, `armed`, `waiting-for-source`, `gpu-copy-pending`, `writing-frame`, `frame-ready`; problems: `gpu-timeout`,
-`source-state-unverified`, `picture-failed`, `unsupported-format`, `readback-map-failed`, `allocation-failed`,
-`capture-too-slow`, `shared-memory-failed`, `source-dimensions-changed`.
+Other capture states: `disabled`, `armed`, `waiting-for-source`, `too-many-source-sizes`, `gpu-copy-pending`,
+`writing-frame`, `frame-ready`; problems: `gpu-timeout`, `source-state-unverified`, `picture-failed`,
+`unsupported-format`, `readback-map-failed`, `allocation-failed`, `capture-too-slow`, `shared-memory-failed`.
 
 Sound states (`audio` in the status): `0` FMOD not loaded yet, `1` waiting for the CRTV's bus, `2` attaching,
 `3` listening; `-1` an FMOD function missing, `-2` not FMOD 2, `-3`/`-4` a DSP couldn't be made/attached,
@@ -189,9 +191,10 @@ Sound states (`audio` in the status): `0` FMOD not loaded yet, `1` waiting for t
 ## The picture's crop
 
 The game draws the CRTV's screen into a 2048×2048 texture, but the screen fills only a band of it:
-`SCREEN_BOX = {6, 345, 2044, 1728}` (left, top, right, bottom), measured in the game (`picture.c`). Other
-texture sizes are taken whole. If the game ever changes how it lays out that texture, the phone's picture shows
-cut or shifted: re-measure and change `SCREEN_BOX`.
+`SCREEN_BOX = {6, 345, 2044, 1728}` (left, top, right, bottom), measured in the game (`picture.c`). The screen shows
+the same part of any texture bound to it, so a texture of another size is cut at the same place, scaled to its
+size. If the game ever changes how it lays out that texture, the phone's picture shows cut or
+shifted: re-measure and change `SCREEN_BOX`.
 
 ## The sound's buses
 

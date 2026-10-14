@@ -43,8 +43,9 @@ secure (`https://`) pages. You can tell Chrome to treat the companion's address 
    `http://192.168.1.50:8790`
 4. Tap **Relaunch**.
 
-The flag applies only to the address you enter, and only in Chrome on that phone. If the address changes
-(another port, or the PC got a new network address), enter the new one.
+The companion's window shows these steps under the PIN, with its current address. The flag applies only to the
+address you enter, and only in Chrome on that phone. If the address changes (another port, or the PC got a new
+network address), enter the new one.
 
 | | Without the flag | With the flag |
 |---|---|---|
@@ -63,4 +64,5 @@ The settings (⚙) show under *Status* whether the rotation sensor and "Screen s
 Safari has no such flag, so on an iPhone the motion sensors and keeping the screen on don't work over the
 companion's `http://` address; iPhones also can't vibrate from a web page. The screen, sound, voices,
 videos, buttons and settings work. During fine tuning, move the picture with the mouse or the controller
-instead. Set *Auto-Lock* to a longer time while you play.
+instead. Set *Auto-Lock* to a longer time while you play. To hide Safari's bars, use Share → **Add to Home
+Screen** and open the page from that icon.

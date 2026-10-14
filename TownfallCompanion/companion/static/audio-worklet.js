@@ -11,11 +11,13 @@ class GameSound extends AudioWorkletProcessor {
       else this.buffer.push(data);
     };
     this.reportedAt = 0;
+    this.wasPlaying = false;
   }
 
   process(inputs, outputs) {
     this.buffer.pull(outputs[0]);
-    if (currentTime - this.reportedAt >= 1) { // how it goes, once a second
+    if (this.buffer.playing !== this.wasPlaying || currentTime - this.reportedAt >= 1) {
+      this.wasPlaying = this.buffer.playing; // report startup/underrun at once, not a second after it happened
       this.reportedAt = currentTime;
       const {frames, underruns, dropped, playing} = this.buffer;
       this.port.postMessage({frames, underruns, dropped, playing});

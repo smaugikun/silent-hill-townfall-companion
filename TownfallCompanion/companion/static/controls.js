@@ -82,6 +82,7 @@ function bindTuning(hit, part, direction) {
   let hold = null;
   const step = () => { if (tune(direction * STEP)) controlHaptic("notch"); };
   const repeat = () => {
+    if (!hold || document.hidden) return;
     hold.repeating = true;
     step();
     const k = Math.min(1, (performance.now() - hold.since - REPEAT_DELAY_MS) / ACCEL_MS);
@@ -96,13 +97,15 @@ function bindTuning(hit, part, direction) {
     hold = {id: ev.pointerId, since: performance.now(), repeating: false, timer: setTimeout(repeat, REPEAT_DELAY_MS)};
   });
   const release = (ev) => {
-    if (ev.pointerId !== hold?.id) return;
+    if (!hold || (ev?.pointerId != null && ev.pointerId !== hold.id)) return;
     clearTimeout(hold.timer);
     part.classList.remove("pressed");
-    if (!hold.repeating && ev.type === "pointerup") step(); // a tap tunes as the button comes back up
+    if (!hold.repeating && ev?.type === "pointerup") step(); // a tap tunes as the button comes back up
     hold = null;
   };
   for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) hit.addEventListener(type, release);
+  window.addEventListener("blur", () => release());
+  document.addEventListener("visibilitychange", () => { if (document.hidden) release(); });
 }
 
 // Fine-tune inputs act the moment they go down: the mini-game is all about timing. `look` is the class `part` shows

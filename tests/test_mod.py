@@ -46,11 +46,12 @@ class ModTest(unittest.TestCase):
         self.bridge_beat.write_text(json.dumps({"time": int(time.time()) - age, "pid": 1, "port": 8790, "phones": phones,
                                                 "nativeFps": fps if phones else 0, "nativeWidth": 640}))
 
-    def mode(self, selector, on_monitor=False, mini_game_shown=False):
+    def mode(self, selector, on_monitor=False, mini_game_shown=False, handoff=False):
         """The phone's mode, as bridge.py writes it: the phone says it every couple of seconds."""
         self.mode_seq = getattr(self, "mode_seq", int(time.time() * 1000)) + 1
         (self.tmp / "townfall-companion-mode.json").write_text(json.dumps(
-            {"selector": selector, "onMonitor": on_monitor, "miniGameShown": mini_game_shown, "seq": self.mode_seq}))
+            {"selector": selector, "onMonitor": on_monitor, "miniGameShown": mini_game_shown, "handoff": handoff,
+             "seq": self.mode_seq}))
 
     def logs(self):
         return list(self.world.logs.values())
@@ -466,6 +467,11 @@ class PhoneCommandTest(ModTest):
         self.phone_mode = (selector, on_monitor)
         self.mode(selector, on_monitor)
 
+    def hide(self):
+        """The phone's page is hidden (screen off, another app): it says AV OUT with a handoff, and keeps saying it."""
+        self.phone_mode = ("AV_OUT", self.phone_mode[1], False, True)
+        self.mode(*self.phone_mode)
+
     def command(self, seq, active, frequency, animate=False):
         # Written the way bridge.py writes it: active only ever switches the CRTV on.
         switch = {"active": True, "animate": animate} if active else {}
@@ -566,7 +572,7 @@ class PhoneCommandTest(ModTest):
         self.assertEqual(self.radio["frequency"], 0.23)  # the dial still moves
         self.assertEqual(self.logged("[TF-CRTV] the phone isn't in VIEW: its CRTV stays as it is"), 1)
 
-    def test_a_phone_that_stops_saying_its_mode_has_its_crtv_put_away(self):
+    def test_a_phone_that_stops_saying_its_mode_hands_the_live_crtv_to_the_pc(self):
         # Its page closed without a word, it fell asleep, or the Wi-Fi went.
         self.play()
         self.say("VIEW")
@@ -576,8 +582,99 @@ class PhoneCommandTest(ModTest):
         self.seconds(4)
         self.assertTrue(self.radio["active"])  # a moment's silence is nothing
         self.seconds(2)
+        self.assertTrue(self.radio["active"])
+        self.assertEqual(self.logged("[TF-CRTV] the phone left: keeping the active CRTV playing on the PC"), 1)
+
+    def test_back_from_a_hidden_page_the_phone_lowers_the_crtv_it_raised_on_the_monitor(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.hide()
+        self.seconds(3)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on"]))  # left up on the PC
+        self.assertEqual(self.logged("the phone left: keeping the active CRTV playing on the PC"), 1)
+        self.say("VIEW", on_monitor=True)
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on"])
+        self.assertEqual(self.logged("the phone is back: the CRTV it switched on is the phone's again"), 1)
+        self.say("VIEW")  # "show the game's CRTV on the monitor" turned off
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, ["on", "off"]))
+
+    def test_back_from_a_hidden_page_av_out_puts_the_crtv_away(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.hide()
+        self.seconds(2)
+        self.say("VIEW", on_monitor=True)
+        self.seconds(1)
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, ["on", "off"]))
+        self.assertEqual(self.logged("putting the phone's CRTV away: the phone is in AV OUT"), 1)
+
+    def test_a_silent_crtv_handed_to_the_pc_is_raised_once_and_shown_the_phones_way_again(self):
+        self.play()
+        self.say("VIEW")
+        self.command(101, True, 0.23)
+        self.seconds(1)
+        self.hide()
+        self.seconds(3)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on"]))  # raised on the monitor, once
+        self.say("VIEW")
+        self.seconds(1)
+        # Raised with the animation, it goes down with it, for the phone to switch it on silently again.
+        self.assertEqual((self.radio["active"], self.requests()), (False, ["on", "off"]))
+        self.assertEqual(self.logged("putting the phone's CRTV away: the phone wants it shown the other way"), 1)
+        self.command(102, True, 0.23)
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on", "off"]))
+
+    def test_a_phone_back_after_going_quiet_puts_its_crtv_away_in_av_out(self):
+        self.play()
+        self.say("VIEW")
+        self.command(101, True, 0.23)
+        self.seconds(1)
+        self.phone_mode = None
+        self.seconds(6)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on"]))
+        self.say("AV_OUT")  # its page again: a page starts in AV OUT
+        self.seconds(1)
+        self.assertEqual((self.radio["active"], self.requests()), (False, ["on", "off"]))
+
+    def test_a_crtv_the_player_put_away_and_raised_while_the_phone_was_away_is_the_players(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.hide()
+        self.seconds(1)
+        self.state(False, False, 0.0)  # put away with the radio button...
+        self.seconds(1)
+        self.state(True, True, 1.0)    # ...and raised with it again
+        self.seconds(1)
+        self.say("AV_OUT")
+        self.seconds(3)
+        self.assertEqual((self.radio["active"], self.requests()), (True, ["on"]))
+
+    def test_a_crtv_on_its_way_down_goes_down_when_the_page_is_hidden(self):
+        self.play()
+        self.say("VIEW", on_monitor=True)
+        self.radio["ignoreRequests"] = True
+        self.command(101, True, 0.23, animate=True)
+        self.seconds(1)
+        self.state(False, True, 0.4)  # coming up
+        self.say("AV_OUT")
+        self.seconds(1)
+        self.hide()
+        self.radio["ignoreRequests"] = False
+        self.state(True, True, 1.0)   # up
+        self.seconds(1)
+        self.assertEqual(self.requests(), ["on", "off"])
         self.assertFalse(self.radio["active"])
-        self.assertEqual(self.logged("[TF-CRTV] putting the phone's CRTV away: the phone went quiet"), 1)
 
     def test_wanted_on_the_monitor_a_silent_crtv_is_switched_off_for_the_phone_to_raise_it(self):
         self.play()
@@ -786,6 +883,7 @@ class SteeringTest(ModTest):
         self.seq = int(time.time() * 1000)
 
     def steer(self, heading, age=0.0, after_ms=100, pitch=None):
+        self.mode("VIEW")  # the real phone renews its steering mode while sending poses
         # seq is the bridge's clock: after_ms since the phone's heading before, age seconds stale by now.
         self.seq += after_ms
         command = {"yaw": heading} if pitch is None else {"yaw": heading, "pitch": pitch}
@@ -795,6 +893,8 @@ class SteeringTest(ModTest):
         self.steer(10, age=60)  # left over from an earlier session
         self.world.enterGameplay(UE_X, UE_Y, UE_Z, 40)
         self.world.tick(2)
+        self.mode("VIEW")
+        self.world.tick(1)
 
     def test_leftover_steering_is_not_applied(self):
         self.play()
@@ -820,6 +920,34 @@ class SteeringTest(ModTest):
         self.steer(20, pitch=-5)   # turned 30 clockwise, tilted 30 down
         self.world.tick(1)
         self.assertEqual(tuple(self.world.controlRotation()), (-20, 70))
+
+    def test_what_became_of_looking_up_is_logged(self):
+        self.play()
+        self.steer(350, pitch=0)
+        self.world.tick(1)
+        self.assertEqual(self.logged("[TF-PLAYER] the phone sends its tilt: up and down follow it"), 1)
+        self.steer(350, pitch=10)
+        self.world.tick(1)
+        self.assertEqual(self.logged("[TF-PLAYER] looking up by 10.0: the camera's pitch was -5.0, set to 5.0, reads 5.0"), 1)
+        self.world.setPitch(355)  # the game keeps 355 for 5 down
+        self.steer(350, pitch=4)
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[0], -11)
+        self.steer(20)  # a phone page that sends no tilt
+        self.world.tick(1)
+        self.assertEqual(self.logged("[TF-PLAYER] the phone sends no tilt: left and right only"), 1)
+
+    def test_an_unreadable_pitch_looks_up_with_the_pawns_input_and_no_lookup_by_path(self):
+        # A lookup by path costs 14-21 ms in the game: the input settings come from the level start.
+        self.play()
+        self.world.dropControlPitch()
+        before = self.world.staticFindCalls
+        self.steer(350, pitch=0)
+        self.world.tick(1)
+        self.steer(350, pitch=10)
+        self.world.tick(1)
+        self.assertEqual(self.world.controlRotation()[0], 5)
+        self.assertEqual(self.world.staticFindCalls, before)
 
     def test_looking_up_stops_short_of_straight_up(self):
         self.play()
@@ -903,6 +1031,18 @@ class SteeringTest(ModTest):
         self.steer(130)
         self.world.tick(1)
         self.assertEqual(self.logged("[TF-PLAYER] turn by 30.0 didn't take: yaw 40.0, wanted 70.0"), 1)
+
+    def test_a_replaced_pawn_with_the_same_name_starts_a_new_steering_baseline(self):
+        self.play()
+        self.steer(100); self.world.tick(1)
+        old_name = self.world.player.GetFullName(self.world.player)
+        self.world.enterGameplay(UE_X, UE_Y, UE_Z, 40)
+        self.world.player.GetFullName = lambda *_: old_name
+        self.world.tick(1)
+        self.steer(130); self.world.tick(1)
+        self.assertEqual(tuple(self.world.controlRotation()), (-5, 40))
+        self.steer(135); self.world.tick(1)
+        self.assertEqual(tuple(self.world.controlRotation()), (-5, 45))
 
 
 class FineTuneConfirmTest(ModTest):
@@ -1329,6 +1469,7 @@ class NoTempDirTest(ModTest):
         self.assertEqual(self.logged("telemetry disabled"), 1)
         self.assertEqual(self.logged("tracking local pawn"), 1)
         self.assertFalse(self.telemetry_file.exists())
+        self.assertEqual(self.logged("phone command error"), 0)
 
 
 class PresenceTest(ModTest):

@@ -17,7 +17,7 @@ if sys.version_info < (3, 10):
     raise SystemExit(f"Townfall Companion needs Python 3.10 or newer, and this is {platform.python_version()}. "
                      "Get it from https://www.python.org/downloads/")
 
-VERSION = "2.0.0"  # the release's version: the bridge says it at start, the release archive is named by it
+VERSION = "2.0.1"  # the release's version: the bridge says it at start, the release archive is named by it
 
 MOD_DIR = Path(__file__).resolve().parents[1]
 SETTINGS_FILE = MOD_DIR / "companion.ini"

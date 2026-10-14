@@ -60,8 +60,9 @@ Many features can be changed in the settings, found in the phone "app" in the to
 **Android is recommended** for looking around, for fine tuning, for Auto Pickup and for keeping the
 screen on: open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, set **Insecure origins treated as
 secure** to Enabled, enter the Companion's address with its port (for example: `http://192.168.1.50:8790`) in the
-field that appears, then relaunch Chrome ([Phone setup](docs/PHONE_SETUP.md)). iPhone works with limitations (no
-motion controls, no vibration, and the screen can't be kept on).
+field that appears, then relaunch Chrome. The Companion's window shows these steps under the PIN, with its current
+address ([Phone setup](docs/PHONE_SETUP.md)). iPhone works with limitations (no motion controls, no vibration, and
+the screen can't be kept on).
 
 **Updating:** close the Companion and the game, delete the `Scripts` and `companion` folders in TownfallCompanion,
 and extract the new version over it. Your settings remain. If you're coming from 1.x, the `tools` and `cache`
@@ -72,6 +73,9 @@ time it starts. Missing symbols or incompatible engine changes can require a mod
 [DLL compatibility](docs/NATIVE_DLL.md#the-game-profile-surviving-game-updates).
 
 **Uninstalling:** delete `...\ue4ss\Mods\TownfallCompanion`.
+
+The Companion and the game pass data through files named `townfall-companion-*` in Windows' temporary folder
+(`%TEMP%`). The Companion deletes them when the game exits; files the game still uses are deleted at a later start.
 
 ## Troubleshooting
 

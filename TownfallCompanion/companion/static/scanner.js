@@ -13,9 +13,10 @@
 // AV OUT: the PC has the CRTV, raised and lowered with the radio button, picture and sound; the phone's screen stays
 // dark.
 // The phone says its mode to the game (sayMode) and the mod does the rest, as it alone knows what the phone switched
-// on: it puts that away once the phone is out of VIEW, or once the monitor is to show it the other way (the phone
-// then switches it on again, the new way), and never a CRTV the player raised.
+// on: a deliberate AV OUT switch puts it away; a hidden/disconnected phone hands the active source back to the PC.
+// Changing how it is shown puts it away and raises it the new way, never a CRTV the player raised.
 import { clamp01, loadFlag, postControl, saveSetting } from "./util.js";
+import { takesGameSound } from "./sound.js";
 
 const SEND_MS = 100;         // tuning goes to the bridge at most this often
 // After tuning, the phone's dial wins over the game's until the game reports it: the telemetry comes
@@ -43,7 +44,9 @@ export const control = {
   dial: 0,             // 0..1, the phone's and the game's; the game reports 0 while lowered, the needle stays put
   tunedAt: -Infinity,  // performance.now() of the last tuning step
   putDown: false,      // the phone lies on a table or stands on a stand: it doesn't turn the player
+  steerSession: Date.now(), // a fresh baseline whenever steering stops/restarts, including a new page
 };
+let steeringBlocked = false, steeringWasOn = false;
 
 let gameCrtv = {};
 let inCutscene = false;
@@ -63,7 +66,14 @@ const inView = () => control.selector === "VIEW";
 const holdsCrtv = () => inView() && globalThis.document?.hidden !== true;
 
 // The phone steers the player: VIEW, with "The phone steers your character", the phone in hand.
-export const steers = () => inView() && control.steering && !control.putDown;
+export const steers = () => holdsCrtv() && control.steering && !control.putDown && !steeringBlocked;
+
+export function setSteeringBlocked(blocked) {
+  if (blocked === steeringBlocked) return;
+  steeringBlocked = blocked;
+  sayMode();
+  changed();
+}
 
 // Whether the phone shows anything: only in VIEW (in AV OUT the PC has the picture).
 export const phoneShows = () => inView();
@@ -160,8 +170,12 @@ function raise() {
 // of seconds (app.js): the mod takes a phone that stops saying it for gone, and the game is as it was without the
 // phone. `leaving`: the page goes away, and hands the game back.
 export function sayMode(leaving = false) {
+  const steering = !leaving && steers();
+  if (steering !== steeringWasOn) { control.steerSession++; steeringWasOn = steering; }
   postControl({type: "mode", selector: holdsCrtv() && !leaving ? "VIEW" : "AV_OUT", onMonitor: control.raises,
-               miniGameShown: control.miniGameShown});
+               miniGameShown: control.miniGameShown, steering, steerSession: control.steerSession,
+               handoff: leaving || globalThis.document?.hidden === true,
+               takeAudio: takesGameSound(holdsCrtv() && !leaving)});
 }
 
 // Switching on (VIEW, in sight): unless it is up already. Not over a cutscene; the rehold switches it on once that
@@ -175,6 +189,7 @@ function hold() {
 export function setSelector(position) {
   if (position === control.selector) return;
   control.selector = position;
+  if (position !== "VIEW") releaseFineTune();
   sayMode();
   hold();
   changed();
@@ -182,14 +197,17 @@ export function setSelector(position) {
 
 // The page hidden or in sight again (app.js): hidden, the game hears AV OUT; in sight, the CRTV comes on again.
 export function onVisibilityChange() {
+  if (globalThis.document?.hidden) releaseFineTune();
   sayMode();
   hold();
+  changed();
 }
 
 // Put down, on a table or a stand, or picked up again (pickup.js): only the turning depends on it.
 export function setPutDown(down) {
   if (down === control.putDown) return;
   control.putDown = down;
+  sayMode();
   changed();
 }
 
@@ -218,6 +236,7 @@ export function setSteering(on) {
   if (on === control.steering) return;
   control.steering = on;
   saveSetting("tfc.sync", on);
+  sayMode();
   changed();
 }
 
@@ -225,15 +244,24 @@ export function setSteering(on) {
 // mini-game, so letting go is sent too. Every press goes to the game, which decides by its own CRTV (and logs it):
 // the phone's idea of it may be a moment behind, as right after the game put the CRTV away and up again.
 let centreSent = false;
+let centreSession = Date.now(), centreRenew = null;
 // While the centre is held (storing a signal) the phone's pose doesn't move the game's image (app.js).
 export const centreHeld = () => centreSent;
 export function confirmFineTune() {
+  if (centreSent) return;
   centreSent = true;
-  postControl({type: "confirm"});
+  centreSession++;
+  postControl({type: "confirm", session: centreSession});
+  centreRenew = setInterval(() => {
+    if (globalThis.document?.hidden) { releaseFineTune(); return; }
+    postControl({type: "confirm", session: centreSession, renew: true});
+  }, 300);
 }
 
 export function releaseFineTune() {
-  if (centreSent) postControl({type: "release"});
+  clearInterval(centreRenew);
+  centreRenew = null;
+  if (centreSent) postControl({type: "release", session: centreSession});
   centreSent = false;
 }
 

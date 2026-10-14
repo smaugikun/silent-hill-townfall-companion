@@ -163,8 +163,7 @@ class Window:
 
     def finish(self):
         sys.stdout, sys.stderr = self.streams
-        # The heartbeat thread beats until the process ends. One beat after main() cleaned up would say for a few
-        # seconds that the companion is still here, and a new one wouldn't start meanwhile.
+        # main() stops its workers before cleanup. Also reclaim this process's beat after a startup/cleanup failure.
         folder = self.companion.Handler.commands_dir
         if folder is not None and self.thread is not None and not self.thread.is_alive():
             beat = folder / self.companion.HEARTBEAT_FILE
@@ -295,6 +294,13 @@ class Window:
                 label("Use the first one; the others are other adapters of this PC.", 9)
         label(f"PIN  {pin}" if pin else "No PIN (set pin in companion.ini to ask for one)", 18 if pin else 10,
               BRIGHT, "bold")
+        if urls:
+            tutorial = ("Motion controls in Android Chrome:\n"
+                        "1. On the phone, open chrome://flags and search for ‘Insecure origins treated as secure’.\n"
+                        f"2. Enable it and enter {urls[0][0]} in its address box.\n"
+                        "3. Tap Relaunch, then reopen the Companion page.")
+            tk.Label(self.addresses, text=tutorial, font=(self.ui, 9), bg=PANEL, fg=TEXT, justify="left",
+                     anchor="w", wraplength=int(530 * self.scale)).pack(anchor="w", pady=(8, 0))
         if urls:
             label("\nThe phone has to be on this PC's network (the router's Wi-Fi, not mobile data). It asks for "
                   "the PIN once.\n"

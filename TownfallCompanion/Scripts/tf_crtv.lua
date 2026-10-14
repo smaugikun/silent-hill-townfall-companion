@@ -45,8 +45,11 @@ local NEEDLES = "/Game/Townfall/Characters/CharacterProps/Radio/WBP_CRTV_Needles
 local needleColours
 local hidden -- what M.hideInMiniGame hid, {prop, was, hands, handsWere}: and whether each was hidden before
 local wish, own -- the character's pending raise or lowering, and the CRTV the phone switched on: see M.pump
+local storedRadio, centreSession, storeUntil = nil, nil, -math.huge
 
 function M.onLevelStart()
+    M.releaseCentre()
+    -- Keep the ended input session across a pawn change; a late renewal must not press the new radio.
     hidden, own, wish = nil, nil, nil -- freed with the level; a new character's clock starts over
     if needleColours then return end
     local needles = StaticFindObject(NEEDLES)
@@ -73,15 +76,22 @@ end
 
 -- The phone's D-pad centre, as the controller's button. In the advanced mini-game's image stages and after (stage 2
 -- on, tf_native.miniGame: the image locked in is stored with it), it is the store button, held until the phone lets
--- go (releaseCentre); otherwise the fine-tune confirm. Returns what it pressed, or nil without a raised radio.
-local storing = false
-function M.pressCentre()
+-- go (releaseCentre); otherwise the fine-tune confirm. Returns what it pressed, nil without a raised radio,
+-- or false for a renewal that didn't press another input.
+function M.pressCentre(session)
+    -- Renew a held input without pressing again. A released session never presses again on a late renewal.
+    if session ~= nil and session == centreSession then
+        if storedRadio then storeUntil = os.clock() + 1.5 end
+        return false
+    end
+    if storedRadio then M.releaseCentre() end
+    centreSession = session
     local radio = raisedRadio()
     if not radio then return nil end
     local game = native.miniGame()
     if game and game.mode == 1 and (game.stage or 0) >= 2 then
         radio:PlayerInput_AdvancedTuningStoreSignal_Pressed()
-        storing = true
+        storedRadio, storeUntil = radio, os.clock() + 1.5
         return "store signal"
     end
     radio:PlayerInput_FineTuneConfirm_Pressed()
@@ -89,12 +99,22 @@ function M.pressCentre()
 end
 
 -- The centre let go: ends a store press. Returns "store signal" if there was one.
-function M.releaseCentre()
-    if not storing then return nil end
-    storing = false
-    local radio = raisedRadio()
-    if radio then radio:PlayerInput_AdvancedTuningStoreSignal_Released() end
+function M.releaseCentre(session)
+    if session ~= nil and centreSession ~= nil and session ~= centreSession then return nil end
+    if not storedRadio then return nil end
+    local radio = storedRadio
+    storedRadio, storeUntil = nil, -math.huge
+    -- Release the object that received the press, even after it was lowered or the player changed pawn.
+    if radio:IsValid() then
+        common.optional("centre release", "TF-CRTV", function() radio:PlayerInput_AdvancedTuningStoreSignal_Released() end)
+    end
     return "store signal"
+end
+
+function M.expireCentre()
+    if storedRadio and (os.clock() >= storeUntil or not player.isTracking() or not player.isAlive()) then
+        M.releaseCentre()
+    end
 end
 
 -- The phone's D-pad arrows, as on a controller: the fine-tune mini-game's arrows while it runs; otherwise left and
@@ -147,13 +167,14 @@ local HANDS_DOWN = 0.05   -- RadioAlpha at or below this: the hands are down
 -- wish (declared at the top): {up, at: when it was last wished, askedAt, firstAskedAt}.
 
 -- What the phone switched on is the phone's to put away, and nothing else. own (declared at the top): how the mod
--- switched it on for the phone, {way = "silent" | "animated", up = seen up since}, from the moment it asked until
--- the CRTV is down again, however it came down (the radio button, the game). It is put away when the phone is out
--- of VIEW, and when the phone wants it the other way (the phone then switches it on again that way), but not in the
+-- switched it on for the phone, {way = "silent" | "animated", up = seen up since, handedOff}, from the moment it asked
+-- until the CRTV is down again, however it came down (the radio button, the game). It is put away when the phone is in
+-- AV OUT, and when the phone wants it the other way (the phone then switches it on again that way), but not in the
 -- middle of a mini-game.
--- phone: the phone's mode as it last said it (tf_commands.lua), {view, onMonitor, miniGameShown, at}; nil until it
--- says. The phone says it every couple of seconds: one that stopped (its page closed or asleep, the Wi-Fi gone) is out
--- of VIEW, and the game goes back to how it is without the phone.
+-- phone: the phone's mode as it last said it (tf_commands.lua), {view, onMonitor, miniGameShown, handoff, at}; nil
+-- until it says. The phone says it every couple of seconds. One whose page is hidden (handoff) or that stopped saying it
+-- (its page closed or asleep, the Wi-Fi gone) hands the CRTV to the PC as it is (handOff), and it stays the phone's:
+-- back, the phone shows it its own way again or puts it away.
 local PHONE_QUIET_S = 5
 local phone = nil
 
@@ -162,6 +183,8 @@ local function phoneView()
     if not phone then return nil end
     return phone.view and os.clock() - phone.at <= PHONE_QUIET_S
 end
+
+function M.inPhoneView() return phoneView() == true end
 
 -- The world's clock (s): it stands still in the pause menu.
 local function worldClock(pawn)
@@ -180,7 +203,13 @@ local function readState(pawn)
     return ok and state or nil
 end
 
--- One animated request; if the requests aren't there, the silent switch instead (logged once).
+-- Nothing of the CRTV is up or on its way (readState): switched off, not held, the hands down.
+local function isDown(state)
+    return not state.flag and not state.using and state.alpha <= HANDS_DOWN
+end
+
+-- One animated request; if the requests aren't there, the silent switch instead (logged once). Returns whether it was
+-- the animated request.
 local function request(pawn, active, force)
     common.log("TF-CRTV", "asking the character to %s the CRTV%s", active and "raise" or "lower", force and " (forced)" or "")
     local ok, err = pcall(function()
@@ -193,6 +222,7 @@ local function request(pawn, active, force)
         common.logChange("radio request error", "TF-CRTV", "RequestRadioON/OFF error: " .. tostring(err))
         pawn:SetRadioInActiveMode(active)
     end
+    return ok
 end
 
 local function ask(pawn, now)
@@ -204,7 +234,7 @@ local function ask(pawn, now)
 end
 
 local function carryOut(pawn, state, now)
-    local down = not state.flag and not state.using and state.alpha <= HANDS_DOWN
+    local down = isDown(state)
     if wish.up then
         if state.flag then
             wish = nil                      -- up
@@ -233,21 +263,45 @@ local function putAway(pawn, now, why)
     end
 end
 
+-- The phone's page is hidden, or the phone went quiet: the PC plays the CRTV on as it is. One switched on silently is
+-- raised with the animation, so the monitor shows what plays. Done once; the CRTV stays the phone's until it is down
+-- (put away and raised again meanwhile, it is the player's).
+local function handOff(pawn, up)
+    if own.handedOff then
+        if not up then
+            local state = readState(pawn)
+            if not state or isDown(state) then own = nil end
+        end
+        return
+    end
+    own.handedOff, wish = true, nil
+    M.releaseCentre()
+    if up and own.way == "silent" and not native.miniGame() and request(pawn, true) then own.way = "animated" end
+    common.log("TF-CRTV", "the phone left: keeping the active CRTV playing on the PC")
+end
+
 -- What the phone's mode asks of the CRTV the phone switched on.
 local function keep(pawn, now)
     local view = phoneView()
     if view == false and wish and wish.up then wish = nil end -- a raise for a phone that left VIEW
     if not own then return end
     local up = pawn:GetIsRadioInActiveMode()
-    if up then own.up = true end
     local lowering = wish ~= nil and not wish.up
+    -- A CRTV on its way down goes on going down: the phone put it away before it left.
+    if view == false and not lowering and (phone.handoff or os.clock() - phone.at > PHONE_QUIET_S) then
+        return handOff(pawn, up)
+    end
+    if own.handedOff then
+        own.handedOff = nil
+        common.log("TF-CRTV", "the phone is back: the CRTV it switched on is the phone's again")
+    end
+    if up then own.up = true end
     local wanted = view and (phone.onMonitor and "animated" or "silent") or nil
     if view == nil or own.way == wanted then
         -- Back in VIEW before it was put away: the phone's again, and still coming up if it was.
         if lowering then wish = not own.up and { up = true, at = now, askedAt = now } or nil end
     elseif not lowering and not (view and native.miniGame()) then
-        putAway(pawn, now, view and "the phone wants it shown the other way"
-            or phone.view and "the phone went quiet" or "the phone is in AV OUT")
+        putAway(pawn, now, view and "the phone wants it shown the other way" or "the phone is in AV OUT")
     end
     if own and not up and (own.up or not wish) then
         own = nil                           -- down again, or it never came up: no longer the phone's
@@ -279,8 +333,9 @@ end
 -- The phone's mode, said every couple of seconds (tf_commands.lua): whether it is in VIEW, and whether in VIEW the
 -- monitor shows the CRTV ("In VIEW, show the game's CRTV on the monitor"), and in the mini-game ("... in the
 -- mini-game"). The monitor follows at once.
-function M.setPhone(view, onMonitor, miniGameShown)
-    phone = { view = view, onMonitor = onMonitor, miniGameShown = miniGameShown, at = os.clock() }
+function M.setPhone(view, onMonitor, miniGameShown, handoff)
+    if not view then M.releaseCentre() end
+    phone = { view = view, onMonitor = onMonitor, miniGameShown = miniGameShown, handoff = handoff, at = os.clock() }
     M.hideInMiniGame()
 end
 

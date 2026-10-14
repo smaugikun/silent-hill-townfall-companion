@@ -641,42 +641,59 @@ static void *fake_lock(void *object, int *pitch, int *height) {
 }
 static void fake_unlock(void *object) { (void)object; }
 
-/* picture.c's cut and scale. The game's 2048 x 2048 texture: green outside the screen's box, inside it red above
- * and blue below; at 640 wide and at 320 the picture is the box's alone, its proportions kept, red at the top and
- * blue at the bottom. A small texture: taken whole, never made bigger. 1 if right. */
-__declspec(dllexport) int crtv_test_picture_scale(void) {
-    unsigned char *texture = HeapAlloc(GetProcessHeap(), 0, 2048u * 2048u * 4u);
+/* picture.c's cut and scale of a `width` x `height` texture: green outside `box`, inside it red above and blue below.
+ * At 640 wide and at 320 the picture is the box's alone (`heights` high), its proportions kept, red at the top and
+ * blue at the bottom. 1 if right. */
+static int cut_and_scaled(int width, int height, const int box[4], const int heights[2]) {
+    unsigned char *texture = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)width * height * 4);
     if (!texture) return 0;
-    for (int y = 0; y < 2048; ++y)
-        for (int x = 0; x < 2048; ++x) {
-            unsigned char *texel = texture + ((size_t)y * 2048 + x) * 4;
-            int inside = x >= SCREEN_BOX[0] && x < SCREEN_BOX[2] && y >= SCREEN_BOX[1] && y < SCREEN_BOX[3];
-            int upper = y < (SCREEN_BOX[1] + SCREEN_BOX[3]) / 2;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x) {
+            unsigned char *texel = texture + ((size_t)y * width + x) * 4;
+            int inside = x >= box[0] && x < box[2] && y >= box[1] && y < box[3];
+            int upper = y < (box[1] + box[3]) / 2;
             texel[0] = inside && upper ? 255 : 0;  /* RGBA */
             texel[1] = inside ? 0 : 255;
             texel[2] = inside && !upper ? 255 : 0;
             texel[3] = 0;
         }
     int ok = 1;
-    for (int wanted = 640; wanted >= 320; wanted -= 320) {
-        int width = wanted;
+    for (int i = 0; i < 2; ++i) {
+        int wanted = i ? 320 : 640, box_width = box[2] - box[0], picture_width = wanted;
         UINT stride = 0;
-        int height = scale_screen(texture, 2048, 2048, 0, &width, &stride);
-        ok = ok && width == wanted && height == (wanted == 640 ? 434 : 217);
-        for (int y = 0; ok && y < height; ++y)
-            for (int x = 0; x < width; ++x) {
-                const unsigned char *bgr = picture_rows + (size_t)y * stride + x * 3;
-                ok = ok && bgr[1] == 0; /* nothing from outside the box */
-            }
-        const unsigned char *top = picture_rows, *bottom = picture_rows + (size_t)(height - 1) * stride;
+        int picture_height = scale_screen(texture, width, height, 0, &picture_width, &stride);
+        ok = ok && picture_width == (wanted < box_width ? wanted : box_width) && picture_height == heights[i];
+        for (int y = 0; ok && y < picture_height; ++y)
+            for (int x = 0; x < picture_width; ++x)
+                ok = ok && picture_rows[(size_t)y * stride + x * 3 + 1] == 0; /* nothing from outside the box */
+        const unsigned char *top = picture_rows, *bottom = picture_rows + (size_t)(picture_height - 1) * stride;
         ok = ok && top[2] == 255 && top[0] == 0 && bottom[0] == 255 && bottom[2] == 0;
     }
     HeapFree(GetProcessHeap(), 0, texture);
+    return ok;
+}
+
+/* The game's own 2048 x 2048 texture, and a 640 x 480 one bound to the screen in its place: the same band of it,
+ * {2, 81, 639, 405}. A small texture: the same band, never made bigger. 1 if right. */
+__declspec(dllexport) int crtv_test_picture_scale(void) {
+    static const int small_box[4] = {2, 81, 639, 405}, game_heights[2] = {434, 217}, small_heights[2] = {324, 163};
+    int ok = cut_and_scaled(2048, 2048, SCREEN_BOX, game_heights) && cut_and_scaled(640, 480, small_box, small_heights);
     fill_fake_pixels();
     int width = 640;
     UINT stride = 0;
     int height = scale_screen(fake_pixels, FAKE_PITCH, FAKE_HEIGHT, 1, &width, &stride); /* BGRA: blue on the left */
-    return ok && width == FAKE_PITCH && height == FAKE_HEIGHT && picture_rows[0] == 255 && picture_rows[2] == 0;
+    return ok && width == FAKE_PITCH && height == 6 && picture_rows[0] == 255 && picture_rows[2] == 0; /* rows 1-6 */
+}
+
+/* One copy queued, mapped and turned into a picture, the GPU done at once. 1 if it ended frame-ready. */
+static int copy_once(void) {
+    next_capture_at = 0;
+    capture_at_frame_end(fake_command_list);
+    if (atomic_load(&capture_state) != 2) return 0;
+    capture_at_frame_end(fake_command_list);
+    ULONGLONG deadline = GetTickCount64() + 3000;
+    while (atomic_load(&capture_state) == 3 && GetTickCount64() < deadline) Sleep(1);
+    return atomic_load(&capture_state) == 4;
 }
 
 __declspec(dllexport) int run_capture_test(int scenario, const wchar_t *output) {
@@ -688,7 +705,7 @@ __declspec(dllexport) int run_capture_test(int scenario, const wchar_t *output) 
     atomic_store(&requested_fps, 0); atomic_store(&capture_fault, 0);
     atomic_store(&published_frames, 0);
     frame_sequence = next_capture_at = 0;
-    allocated_width = allocated_height = allocated_format = 0;
+    memset(readbacks, 0, sizeof(readbacks));
     readback = NULL; frame_pixels = NULL; retained_source = pending_source = NULL;
     image_base = (unsigned char *)((uintptr_t)fake_command_list - IMMEDIATE_LIST_RVA);
     game_thread_id = GetCurrentThreadId() + 1;
@@ -766,6 +783,25 @@ __declspec(dllexport) int run_capture_test(int scenario, const wchar_t *output) 
         capture_at_frame_end(fake_command_list);
         result = atomic_load(&capture_state) == 0 && atomic_load(&published_frames) == 2 && queues == 2 && locks == 2;
     }
+    if (scenario == 13 && result) {
+        /* A texture of another size bound to the screen, the game's again, then more sizes than readbacks:
+         * a readback for each size, made once and reused; a size too many waits, and capture goes on after it. */
+        static const int sizes[4][2] = {{FAKE_WIDTH / 2, FAKE_HEIGHT / 2}, {FAKE_WIDTH, FAKE_HEIGHT}, {12, 6}, {10, 5}};
+        void *first = readback;
+        for (int i = 0; i < 4; ++i) {
+            publish_capture_source(fake_texture, sizes[i][0], sizes[i][1], PIXEL_RGBA8);
+            /* Only the game's own size (i == 1) takes the first readback again. */
+            if (!copy_once() || frame_width != sizes[i][0] || (i == 1) != (readback == first)) { result = 0; goto done; }
+        }
+        if (constructors != READBACKS || queues != 5) { result = 0; goto done; }
+        publish_capture_source(fake_texture, 6, 3, PIXEL_RGBA8);
+        next_capture_at = 0;
+        capture_at_frame_end(fake_command_list);
+        if (atomic_load(&capture_state) != 1 || atomic_load(&capture_wait_reason) != 8 || queues != 5 ||
+            strcmp(capture_status(), "too-many-source-sizes")) { result = 0; goto done; }
+        publish_capture_source(fake_texture, FAKE_WIDTH, FAKE_HEIGHT, PIXEL_RGBA8);
+        result = copy_once() && readback == first && constructors == READBACKS && queues == 6 && refs == 1;
+    }
 done:
     /* The picture published, if any, for test_native.py to look at: as the bridge reads it, header and JPEG. */
     if (atomic_load(&published_frames) && shared_frame) {
@@ -783,7 +819,9 @@ done:
     atomic_store(&capture_state, 0);
     fake_retain(&pending_source, NULL);
     fake_retain(&retained_source, NULL);
-    if (readback) HeapFree(GetProcessHeap(), 0, readback);
+    for (int i = 0; i < READBACKS; ++i)
+        if (readbacks[i].object) HeapFree(GetProcessHeap(), 0, readbacks[i].object);
+    memset(readbacks, 0, sizeof(readbacks));
     if (frame_pixels && atomic_load(&capture_state) != 3) HeapFree(GetProcessHeap(), 0, frame_pixels);
     frame_pixels = NULL; readback = NULL;
     if (shared_frame) UnmapViewOfFile(shared_frame);

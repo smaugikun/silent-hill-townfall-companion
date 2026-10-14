@@ -237,7 +237,7 @@ class GameLiveTest(BridgeTest):
     def test_game_live_follows_the_telemetry_file(self):
         state = json.loads(self.get("/api/state")[2])
         self.assertFalse(state["gameLive"])
-        self.assertEqual(state["bridge"], 31)  # static/app.js warns about older bridges
+        self.assertEqual(state["bridge"], 33)  # static/app.js warns about older bridges
         self.assertRegex(state["page"], r"^[0-9a-f]{12}$")  # an open page reloads when its files change
         self.telemetry.write_text(json.dumps({"t": 812.25, "world": 30.5, "player": {"x": 1, "y": 2, "yaw": 3},
                                               "signals": [{"id": "Clinic", "channel": 0.15}]}))

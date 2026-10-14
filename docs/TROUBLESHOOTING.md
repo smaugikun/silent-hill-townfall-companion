@@ -131,7 +131,7 @@ battery saver. iPhones can't vibrate from a web page.
 ### No sound on the phone
 
 - Tap the phone's screen once (browsers wait for a tap), and keep the page open with the screen on: a phone that
-  turns its screen off or switches to another app stops playing and hands the CRTV back to the PC, as AV OUT does.
+  turns its screen off or switches to another app stops playing, and the PC plays the CRTV's sound again.
 - Settings: *In VIEW the phone plays the sound* on, and the *Phone volume* up (at 0 the phone is silent and the
   game plays its own sound). In AV OUT the sound always plays on the PC.
 - Settings → *Status* → *Sound* says *playing* while the game's sound comes through. *No sound from the game yet*:
@@ -145,10 +145,16 @@ comes through to the phone: the CRTV, the voices heard through it, the waypoints
 the CRTV's videos. Everything else stays in the game: your character's own voice, the story's cutscenes, the world.
 The *Phone volume* slider sets the phone's own sound; the game's volume settings set it too.
 
-When the phone's screen locks or its page becomes hidden, the page immediately asks the game to play the CRTV
-sound on the PC again. If the phone loses power or Wi-Fi and cannot send that request, the game restores its
-sound about 5 seconds after the last phone request. The DLL also restores sound after 6 seconds without a
-renewed mute command from the mod.
+Switching to VIEW, the game goes quiet before the CRTV comes on, and the phone plays from there on: what the PC
+already played isn't repeated on the phone. When the phone's screen locks or its page is hidden, the PC plays the
+CRTV's sound again at once; a phone that goes off without a word (no power, no Wi-Fi) gives it back after about
+5 seconds.
+
+### The CRTV's static drones on the phone
+
+The CRTV's static carries a steady hum, and the phone gets it before the game's last mixing steps on the PC. Turn on
+*Remove the hum* in the settings (on by default): it filters that hum out and leaves the rest of the sound. Off, the
+phone plays the sound as the game's CRTV gives it.
 
 ### The CRTV doesn't show on the monitor in VIEW
 
@@ -166,11 +172,18 @@ settings apply: the game shows the CRTV as it does without the mod.
 
 ### The CRTV goes down by itself in VIEW
 
-The phone tells the game every couple of seconds that it is in VIEW. With the phone's screen off or another app in
-front, it tells the game AV OUT instead; and when it says nothing for 5 seconds (the page closed, the Wi-Fi gone),
-the game takes it as AV OUT too. Either way the CRTV the phone switched on is put away, and the PC has the CRTV
-again. Back on the page in VIEW, the phone switches it on again. `UE4SS.log` says why it was put away, in a line
-starting with `[TF-CRTV] putting the phone's CRTV away`.
+Changing *In VIEW, show the game's CRTV on the monitor* puts the CRTV away and switches it on again the new way. The
+game can also put it away itself (a cutscene, an interaction): in VIEW the phone switches it on again a moment later,
+three times in a row at most, and after a cutscene. `UE4SS.log` says why the mod put it away, in a line starting
+with `[TF-CRTV] putting the phone's CRTV away`.
+
+### The CRTV stays up after the phone's screen turned off
+
+When the phone's screen turns off, another app comes to the front, the page closes or nothing is heard from the
+phone for 5 seconds, the CRTV the phone switched on stays on in the game; one switched on silently is raised, so the
+monitor shows it. Back on the page, the phone takes it again: AV OUT puts it away, and *In VIEW, show the game's
+CRTV on the monitor* shows or hides it. If you put it away and raise it again with the radio button meanwhile, it is
+yours, and the phone leaves it as it is.
 
 ### The CRTV stays on the monitor, or the hands stay up, after leaving VIEW
 

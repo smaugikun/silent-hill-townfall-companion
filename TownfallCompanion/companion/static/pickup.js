@@ -13,6 +13,7 @@
 // With Auto pickup, raising/picking up goes to VIEW, lying flat goes to AV OUT, and a detected stand goes
 // to whichever position the Stand setting says (VIEW or AV OUT).
 import { loadFlag, saveSetting } from "./util.js";
+import { motionPermission } from "./motion-access.js";
 
 const RAISED_DEG = 30;  // held up to look at, or pointed ahead like the CRTV
 const FLAT_DEG = 15;    // lying on a table, a lap, an armrest
@@ -201,19 +202,23 @@ function motionHandler(e) {
 
 // Reads the sensor from now on. iOS asks first, and only from a tap; elsewhere it starts on load, so
 // the phone knows it lies flat before the selector is first slid to VIEW.
-let listening = false;
+let listening = false, requesting = false;
 export function listenMotion() {
-  if (listening || typeof DeviceMotionEvent === "undefined") return;
+  if (listening || requesting || typeof DeviceMotionEvent === "undefined") return;
   const listen = () => {
     if (listening) return;
     listening = true;
     window.addEventListener("devicemotion", motionHandler);
   };
-  if (typeof DeviceMotionEvent.requestPermission === "function") {
-    DeviceMotionEvent.requestPermission().then((r) => { if (r === "granted") listen(); }).catch(() => {});
-  } else {
-    listen();
+  if (typeof DeviceMotionEvent.requestPermission !== "function") {
+    if (globalThis.isSecureContext !== false) listen();
+    return;
   }
+  requesting = true;
+  motionPermission(DeviceMotionEvent).then(allowed => {
+    requesting = false;
+    if (allowed) listen();
+  });
 }
 
 export function setStandAvOut(on) {

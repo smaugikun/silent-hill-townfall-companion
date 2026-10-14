@@ -9,6 +9,8 @@ return function(scriptsDir, tempDir, options)
     local ENEMY_CLASS = "/Script/Townfall.TownfallEnemyCharacter"
     local WAYPOINT_CLASS = "/Script/Townfall.RadioWaypointSourceComponent"
     local controller
+    local yawInput, pitchInput = 0, 0
+    world.normalLookInputs = { yaw = 0, pitch = 0 }
     local serial = 0
     local function nextId()
         serial = serial + 1
@@ -42,6 +44,9 @@ return function(scriptsDir, tempDir, options)
     -- Game time, in seconds: world.tick moves it on. Nothing the mod does takes any. The world's own
     -- clock stands still while world.paused (the pause menu); os.clock runs on.
     local clock = 0
+    local wallOffset, realTime = 0, os.time
+    os.time = function(...) return realTime(...) + wallOffset end
+    function world.advanceWall(seconds) wallOffset = wallOffset + seconds end
     os.clock = function() return clock end
     local worldTime = 0
     world.paused = false
@@ -96,6 +101,9 @@ return function(scriptsDir, tempDir, options)
             return options.noNeedles and CreateInvalidObject() or world.needles
         end
         if path == "/Script/Engine.DefaultPawn" then return DefaultPawnClass end
+        if path == "/Script/Engine.Default__InputSettings" then
+            return object({ name = "Default__InputSettings", bEnableLegacyInputScales = false })
+        end
         if path == ENEMY_CLASS then
             return options.noEnemyClass and CreateInvalidObject() or object({ name = "TownfallEnemyCharacter" })
         end
@@ -150,9 +158,15 @@ return function(scriptsDir, tempDir, options)
                 return { X = self.loc.X, Y = self.loc.Y, Z = self.loc.Z }
             end,
             AddControllerPitchInput = function(self, value)
+                world.normalLookInputs.pitch = world.normalLookInputs.pitch + 1
+                if options.hiddenControlPitch or (controller and controller.hidePitch) then pitchInput = pitchInput + value; return end
                 if controller and not controller.locked then
                     controller.pitch = math.max(-80, math.min(80, (controller.pitch or 0) + value))
                 end
+            end,
+            AddControllerYawInput = function(self, value)
+                world.normalLookInputs.yaw = world.normalLookInputs.yaw + 1
+                yawInput = yawInput + value
             end,
         })
     end
@@ -162,15 +176,28 @@ return function(scriptsDir, tempDir, options)
         controller = object({
             name = "Controller_" .. pawn.name, Pawn = pawn, yaw = 0, pitch = -5,
             GetFullName = function(self) return self.name end,
-            GetControlRotation = function(self) return { Pitch = self.pitch, Yaw = self.yaw, Roll = 0 } end,
+            GetControlRotation = function(self)
+                if options.hiddenControlPitch or self.hidePitch then
+                    return setmetatable({ __hiddenPitch = self.pitch, __yaw = self.yaw, Roll = 0 }, {
+                        __index = function(r, key) if key == "Yaw" then return rawget(r, "__yaw") end end,
+                        __newindex = function(r, key, value)
+                            if key == "Yaw" then
+                                if options.readonlyRotation then error("read-only rotator") end
+                                rawset(r, "__yaw", value)
+                            else rawset(r, key, value) end
+                        end,
+                    })
+                end
+                return { Pitch = self.pitch, Yaw = self.yaw, Roll = 0 }
+            end,
             SetControlRotation = function(self, r)
-                if not self.locked then self.pitch, self.yaw = r.Pitch, r.Yaw end
+                if not self.locked then self.pitch, self.yaw = r.Pitch or r.__hiddenPitch, r.Yaw end
             end,
         })
     end
 
     function world.controlRotation() return controller.pitch, controller.yaw end
-    function world.dropControlPitch() controller.pitch = nil end
+    function world.dropControlPitch() controller.hidePitch = true end
     -- The game holds the camera: SetControlRotation has no effect.
     function world.lockCamera() controller.locked = true end
 
@@ -231,7 +258,10 @@ return function(scriptsDir, tempDir, options)
             return radio
         end
         radio.SetTunedFrequency = function(self, frequency) radio.frequency = frequency end
-        pawn.SetRadioInActiveMode = function(self, active) radio.active = active end
+        pawn.SetRadioInActiveMode = function(self, active)
+            if active then world.audioMutedWhenRaised = package.loaded.tf_audio.isOff() end
+            radio.active = active
+        end
         -- What the character keeps about the radio (as UE4SS.log showed it): IsUsingRadio, and RadioAlpha on his
         -- animation (the hands). The requests move both at once unless radio.ignoreRequests; a test that wants
         -- a raise or lowering half done sets them itself.
@@ -241,6 +271,7 @@ return function(scriptsDir, tempDir, options)
         radio.requests = {}
         if not options.noRadioRequests then
             pawn.RequestRadioON = function()
+                world.audioMutedWhenRaised = package.loaded.tf_audio.isOff()
                 radio.requests[#radio.requests + 1] = "on"
                 if not radio.ignoreRequests then radio.active, pawn.IsUsingRadio, anim.RadioAlpha = true, true, 1 end
             end
@@ -265,6 +296,7 @@ return function(scriptsDir, tempDir, options)
 
     function world.movePlayer(x, y, z) world.player.loc = { X = x, Y = y, Z = z } end
     function world.setYaw(yaw) controller.yaw = yaw end
+    function world.setPitch(pitch) controller.pitch = pitch end
 
     -- The game spawns an enemy: it is constructed (NotifyOnNewObject fires) and is in the world.
     -- BP_TestAIAgent_C has a RadioStaticSource; with `noSource` the property doesn't exist,
@@ -344,6 +376,13 @@ return function(scriptsDir, tempDir, options)
         for _ = 1, samples or 1 do
             for _, l in ipairs(loops) do if l.ms < 1000 then l.fn() end end
         end
+        if controller and not controller.locked then
+            controller.yaw = controller.yaw + yawInput
+            if pitchInput ~= 0 then
+                controller.pitch = math.max(-80, math.min(80, ((controller.pitch or 0) + 180) % 360 - 180 + pitchInput))
+            end
+        end
+        yawInput, pitchInput = 0, 0
         clock = clock + 1
         if not world.paused then worldTime = worldTime + 1 end
     end

@@ -17,7 +17,8 @@ class GameAudio:
     def __init__(self, name=MAPPING_NAME):
         self.name = name
         self.handle = self.view = None
-        self.lock = threading.Lock()  # one view for every phone's stream
+        self.lock = threading.RLock()  # protect the mapping throughout each copy, including header reads
+        self.closed = False
         self.kernel = ct.WinDLL("kernel32", use_last_error=True)
         self.kernel.OpenFileMappingW.argtypes = [ct.c_uint32, ct.c_int, ct.c_wchar_p]
         self.kernel.OpenFileMappingW.restype = ct.c_void_p
@@ -29,6 +30,8 @@ class GameAudio:
     def _header(self):
         """(rate, channels, capacity, ring address) of the sound the game shares, or None while it shares none."""
         with self.lock:
+            if self.closed:
+                return None
             if not self.view:
                 self.handle = self.kernel.OpenFileMappingW(FILE_MAP_READ, False, self.name)
                 if not self.handle:
@@ -38,18 +41,23 @@ class GameAudio:
                     self._close()
                     return None
             magic, rate, channels, capacity, header_size = HEADER.unpack(ct.string_at(self.view, HEADER.size))
-        if magic != MAGIC or not rate or not channels or not capacity:
-            return None
-        return rate, channels, capacity, self.view + header_size
+            if magic != MAGIC or not rate or not channels or not capacity:
+                return None
+            return rate, channels, capacity, self.view + header_size
 
     def format(self):
         """(rate, channels) of the game's sound, or None while there is none."""
-        header = self._header()
-        return header[:2] if header else None
+        with self.lock:
+            header = self._header()
+            return header[:2] if header else None
 
     def read(self, position):
         """The sound written since frame `position` (None: start just behind the newest), as 16-bit samples, and the
         frame to read from next. A reader held up too long, or a game started anew, starts again just behind."""
+        with self.lock:
+            return self._read_locked(position)
+
+    def _read_locked(self, position):
         header = self._header()
         if not header:
             return b"", position
@@ -80,4 +88,5 @@ class GameAudio:
 
     def close(self):
         with self.lock:
+            self.closed = True
             self._close()

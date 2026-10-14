@@ -249,8 +249,8 @@ class FakeEngineTest(unittest.TestCase):
         self.assertTrue(all(abs(a - b) <= 40 for a, b in zip(pixel, colour)), f"{pixel} isn't {colour}")
 
     def test_waits_for_submission_and_gpu_fence_before_mapping(self):
-        image, meta = self.picture(1)
-        self.assertEqual((image.format, image.size, meta["width"], meta["height"]), ("JPEG", (16, 8), 16, 8))
+        image, meta = self.picture(1)  # the screen's band of the 16 x 8 texture: rows 1 to 6
+        self.assertEqual((image.format, image.size, meta["width"], meta["height"]), ("JPEG", (16, 6), 16, 6))
         self.assertColour(image.getpixel((3, 4)), (255, 0, 0))  # the texture's red half, its alpha unused
         self.assertColour(image.getpixel((12, 4)), (0, 0, 255))  # and its blue half; the padding never shows
         self.assertEqual(meta["sequence"], 1)
@@ -275,6 +275,13 @@ class FakeEngineTest(unittest.TestCase):
     def test_continuous_capture_reuses_its_buffers_paces_and_stops(self):
         image, meta = self.picture(11)
         self.assertEqual(meta["sequence"], 2)
+        self.assertColour(image.getpixel((3, 4)), (255, 0, 0))
+
+    def test_a_texture_of_another_size_on_the_screen_keeps_the_picture_coming(self):
+        # A texture of another size bound in place of the game's 2048 x 2048 one, and back: each size gets
+        # a readback of its own, kept; one size too many waits, and the game's own comes through again after it.
+        image, meta = self.picture(13)
+        self.assertEqual((image.size, meta["sequence"]), ((16, 6), 6))
         self.assertColour(image.getpixel((3, 4)), (255, 0, 0))
 
     def test_without_word_from_the_mod_no_new_copies_start(self):

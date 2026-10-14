@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import {createAudioHandoff} from "../TownfallCompanion/companion/static/audio-handoff.js";
 
 // Exercise the app's routing and event wiring with a phone whose timers can be suspended.
 const app = readFileSync(new URL("../TownfallCompanion/companion/static/app.js", import.meta.url), "utf8");
@@ -12,11 +13,14 @@ assert.ok(start >= 0 && end > start, "the app's audio routing section exists");
 function phone() {
   const sent = [], listeners = new Map();
   let tick;
+  const claim = createAudioHandoff(() => 0);
   const world = {
     control: {selector: "VIEW"},
     sound: {inView: true, muteGame: true, volume: 1},
     playing: true,
+    running: true,
     soundPlaying: () => world.playing,
+    takesGameSound: wanted => claim({wanted, running: world.running, playing: world.playing}),
     bridgeOnline: true,
     state: {gameLive: true, player: {alive: true}},
     document: {
@@ -62,10 +66,12 @@ test("waking the phone only takes sound back from the PC once it plays again", (
   page.tick();
   page.visibility("hidden");
   page.world.playing = false;
+  page.world.running = false;
   page.visibility("visible");
   page.tick();
   assert.equal(page.sent.length, 2, "PC stays audible while the phone waits for sound");
   page.world.playing = true;
+  page.world.running = true;
   page.tick();
   assert.deepEqual(page.sent.at(-1), {type: "audio", muteGame: true});
 });

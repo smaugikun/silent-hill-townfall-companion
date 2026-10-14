@@ -44,16 +44,21 @@ native.init(tempDir)
 local phoneHere = false
 local bridgeBeat
 local lastBridge = { false, 0, nil }
+local lastBridgeAt = -math.huge
 local function readBridge()
     bridgeBeat = bridgeBeat or (bridgeBeatPath and io.open(bridgeBeatPath, "r"))
     if not bridgeBeat then return false, 0, nil end
     bridgeBeat:seek("set", 0)
     local text = bridgeBeat:read("a") or ""
     local time = tonumber(text:match('"time"%s*:%s*(%d+)'))
-    if not (time and text:find("}", 1, true)) then return lastBridge[1], lastBridge[2], lastBridge[3] end
+    if not (time and text:find("}", 1, true)) then
+        if math.abs(os.time() - lastBridgeAt) > 5 then return false, 0, nil end
+        return lastBridge[1], lastBridge[2], lastBridge[3]
+    end
     local phones = tonumber(text:match('"phones"%s*:%s*(%d+)')) or 0
     lastBridge = { math.abs(os.time() - time) <= 5 and phones > 0, tonumber(text:match('"nativeFps"%s*:%s*(%d+)')) or 0,
                    tonumber(text:match('"nativeWidth"%s*:%s*(%d+)')) }
+    lastBridgeAt = time
     return lastBridge[1], lastBridge[2], lastBridge[3]
 end
 
@@ -80,6 +85,7 @@ end
 
 local function refresh()
     if player.refresh() then
+        commands.reset()
         enemies.onLevelStart()
         crtv.onLevelStart()
         signals.onLevelStart()

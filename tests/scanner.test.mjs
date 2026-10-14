@@ -17,6 +17,7 @@ globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); retu
 globalThis.localStorage = { getItem: () => null, setItem: () => {} };
 
 let loads = 0;
+const controlBody = ({client, order, steerSession, steering, handoff, takeAudio, ...body}) => body;
 async function phone({ raises = false } = {}) {
   clock = 0;
   sent = [];
@@ -32,8 +33,9 @@ async function phone({ raises = false } = {}) {
         clock += 100;
       }
     },
-    sent: () => sent.splice(0),
-    commands: () => sent.splice(0).filter((c) => c.type === "crtv"),
+    sent: () => sent.splice(0).map(controlBody),
+    protocol: () => sent.splice(0),
+    commands: () => sent.splice(0).filter((c) => c.type === "crtv").map(controlBody),
   };
   return { scanner, world };
 }
@@ -160,4 +162,60 @@ test("the mini-game setting is said at once, and leaves the CRTV as it is", asyn
   assert.deepEqual(world.sent(), [mode("VIEW", false, true)]);
   world.crtv(true, 3000);
   assert.deepEqual(world.sent(), []);
+});
+
+test("putting the phone down and picking it up starts a fresh steering session", async () => {
+  const {scanner, world} = await phone();
+  scanner.setSelector("VIEW");
+  scanner.setSteering(true);
+  const started = world.protocol().filter(body => body.type === "mode").at(-1);
+  assert.equal(started.steering, true);
+  scanner.setPutDown(true);
+  const stopped = world.protocol().at(-1);
+  assert.equal(stopped.steering, false);
+  assert.ok(stopped.steerSession > started.steerSession);
+  scanner.setPutDown(false);
+  const resumed = world.protocol().at(-1);
+  assert.equal(resumed.steering, true);
+  assert.ok(resumed.steerSession > stopped.steerSession);
+  assert.equal(resumed.client, started.client);
+  assert.ok(resumed.order > stopped.order);
+});
+
+test("hiding the page requests an audio handoff and releases a held centre; a selector change is separate", async () => {
+  const {scanner, world} = await phone();
+  globalThis.document = {hidden: false};
+  scanner.setSelector("VIEW");
+  scanner.setSteering(true);
+  world.protocol();
+  scanner.confirmFineTune();
+  const press = world.protocol().at(-1);
+  document.hidden = true;
+  scanner.onVisibilityChange();
+  const leaving = world.protocol();
+  assert.equal(leaving[0].type, "release");
+  assert.equal(leaving[0].session, press.session);
+  assert.equal(leaving.at(-1).handoff, true);
+  assert.equal(leaving.at(-1).steering, false);
+  assert.equal(scanner.centreHeld(), false);
+  document.hidden = false;
+  scanner.onVisibilityChange(); world.protocol();
+  scanner.setSelector("AV_OUT");
+  assert.equal(world.protocol().at(-1).handoff, false);
+});
+
+test("a long centre hold renews its lease without another press session and stops renewing after release", async () => {
+  const {scanner, world} = await phone();
+  scanner.confirmFineTune();
+  const press = world.protocol().at(-1);
+  await new Promise(resolve => setTimeout(resolve, 340));
+  const renew = world.protocol().at(-1);
+  assert.equal(renew.session, press.session);
+  assert.equal(renew.renew, true);
+  scanner.releaseFineTune();
+  const release = world.protocol().at(-1);
+  assert.equal(release.type, "release");
+  assert.equal(release.session, press.session);
+  await new Promise(resolve => setTimeout(resolve, 340));
+  assert.deepEqual(world.protocol(), []);
 });
